@@ -2,7 +2,9 @@ package mock
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -152,6 +154,31 @@ func fakeFileID(kind string) string {
 // =====================================================================
 // Bot API endpoints
 // =====================================================================
+
+func (h *Handlers) GetUpdates(c *gin.Context, bot *botEntry) {
+	if h.WebhookDispatcher.hasTarget(bot) {
+		errResp(c, http.StatusConflict, "Conflict: can't use getUpdates method while webhook is active")
+		return
+	}
+	if !bot.updates.pollMu.TryLock() {
+		errResp(c, http.StatusConflict, "Conflict: another getUpdates request is active")
+		return
+	}
+	defer bot.updates.pollMu.Unlock()
+
+	var req struct {
+		Offset  int64 `json:"offset" form:"offset"`
+		Limit   int   `json:"limit" form:"limit"`
+		Timeout int   `json:"timeout" form:"timeout"`
+	}
+	if err := c.ShouldBind(&req); err != nil {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	timeout := time.Duration(max(0, req.Timeout)) * time.Second
+	updates := bot.updates.Poll(c.Request.Context(), req.Offset, req.Limit, timeout)
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: updates})
+}
 
 func (h *Handlers) GetMe(c *gin.Context, bot *botEntry) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: bot.identity})
@@ -443,29 +470,50 @@ func (h *Handlers) GetChatMember(c *gin.Context, _ *botEntry) {
 	}})
 }
 
+// Telegram accepts an empty JSON body as no parameters for both webhook methods.
+// deleteWebhook has no required parameters. Although setWebhook documents url
+// as required, its server treats an omitted URL as empty and removes the webhook.
+// Accept io.EOF from binding below to match that behavior.
+// See process_set_webhook_query in:
+// https://github.com/tdlib/telegram-bot-api/blob/e3e9dd8e5b3d7ab8537cd5a10dc31d5ffa8f82d1/telegram-bot-api/Client.cpp#L15803-L15807
+type webhookRequest struct {
+	URL                string `json:"url" form:"url"`
+	SecretToken        string `json:"secret_token" form:"secret_token"`
+	DropPendingUpdates bool   `json:"drop_pending_updates" form:"drop_pending_updates"`
+}
+
 func (h *Handlers) SetWebhook(c *gin.Context, bot *botEntry) {
-	body, err := readBody(c)
-	if err != nil {
+	var req webhookRequest
+	if err := c.ShouldBind(&req); err != nil && !errors.Is(err, io.EOF) {
 		errResp(c, 400, "Bad Request: "+err.Error())
 		return
 	}
-	url := toString(body["url"])
-	secret := toString(body["secret_token"])
-	bot.SetWebhook(url, secret)
+	if req.DropPendingUpdates {
+		bot.updates.Clear()
+	}
+	bot.SetWebhook(req.URL, req.SecretToken)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
 func (h *Handlers) DeleteWebhook(c *gin.Context, bot *botEntry) {
+	var req webhookRequest
+	if err := c.ShouldBind(&req); err != nil && !errors.Is(err, io.EOF) {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	if req.DropPendingUpdates {
+		bot.updates.Clear()
+	}
 	bot.SetWebhook("", "")
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
 func (h *Handlers) GetWebhookInfo(c *gin.Context, bot *botEntry) {
-	url, _ := bot.Webhook()
+	url, _ := h.WebhookDispatcher.target(bot)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: WebhookInfo{
 		URL:                  url,
 		HasCustomCertificate: false,
-		PendingUpdateCount:   0,
+		PendingUpdateCount:   bot.updates.Len(),
 		MaxConnections:       40,
 	}})
 }

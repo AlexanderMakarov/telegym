@@ -56,9 +56,9 @@ func NewMetrics(store *Store) *Metrics {
 		WebhookDispatchTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "telegym_mock_webhook_dispatches_total",
-				Help: "Update deliveries to the bot-under-test webhook.",
+				Help: "Update dispatches to the bot-under-test webhook or polling queue.",
 			},
-			[]string{"result"}, // "ok" | "fail" | "no_url"
+			[]string{"result"}, // "ok" | "fail" | "queued"
 		),
 		WebhookDispatchDuration: prometheus.NewHistogram(
 			prometheus.HistogramOpts{

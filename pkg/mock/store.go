@@ -30,6 +30,7 @@ type botEntry struct {
 	identity    User
 	webhookURL  string
 	secretToken string
+	webhookSet  bool
 
 	// firstSeen is set once at creation; lastSeen is bumped on every
 	// withBot dispatch. Both are unix seconds. lastSeen uses atomic ops
@@ -53,6 +54,8 @@ type botEntry struct {
 	// answerCallbackQuery text). Drained by the chat /messages poll.
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
+
+	updates *updateQueue
 
 	// Chat action from sendChatAction ("typing", "upload_photo", ...) per
 	// chat and forum topic. Cleared by the next new message in that topic
@@ -129,6 +132,7 @@ func (s *Store) Bot(token string) *botEntry {
 		firstSeen:   now,
 		maxMessages: defaultMaxMessages,
 		maxInputs:   1000,
+		updates:     newUpdateQueue(),
 	}
 	b.lastSeen.Store(now)
 	s.bots[token] = b
@@ -220,6 +224,7 @@ func (b *botEntry) SetWebhook(url, secret string) {
 	b.msgMu.Lock()
 	b.webhookURL = url
 	b.secretToken = secret
+	b.webhookSet = true
 	b.msgMu.Unlock()
 }
 

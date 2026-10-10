@@ -11,7 +11,7 @@ import (
 // DebugAPI exposes endpoints used by the xk6 extension (and humans via curl)
 // to drive the bot: inject Updates and inspect what the bot has sent.
 
-// InjectUpdateRequest describes a synthetic Update delivered to the bot's webhook.
+// InjectUpdateRequest describes a synthetic Update delivered by webhook or polling.
 type InjectUpdateRequest struct {
 	Token string `json:"token" binding:"required"`
 
@@ -148,6 +148,7 @@ func (h *Handlers) DebugInjectUpdate(c *gin.Context) {
 		"ok":              true,
 		"update_id":       upd.UpdateID,
 		"delivery_status": status,
+		"queued":          status == 0,
 	}
 	if upd.CallbackQuery != nil {
 		resp["callback_query_id"] = upd.CallbackQuery.ID
