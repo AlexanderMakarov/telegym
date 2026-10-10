@@ -14,12 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handlers wires the Bot API method endpoints to the Store and WebhookDispatcher.
+// Handlers wires the Bot API method endpoints to the Store and UpdateDispatcher.
 // Every method either returns a valid Message (so telego et al. can
 // unmarshal) or a boolean - matching the real Telegram API contract.
 type Handlers struct {
-	Store             *Store
-	WebhookDispatcher *WebhookDispatcher
+	Store            *Store
+	UpdateDispatcher *UpdateDispatcher
 }
 
 // errResp writes a Telegram-shaped error envelope.
@@ -156,7 +156,7 @@ func fakeFileID(kind string) string {
 // =====================================================================
 
 func (h *Handlers) GetUpdates(c *gin.Context, bot *botEntry) {
-	if h.WebhookDispatcher.hasTarget(bot) {
+	if h.UpdateDispatcher.hasTarget(bot) {
 		errResp(c, http.StatusConflict, "Conflict: can't use getUpdates method while webhook is active")
 		return
 	}
@@ -509,7 +509,7 @@ func (h *Handlers) DeleteWebhook(c *gin.Context, bot *botEntry) {
 }
 
 func (h *Handlers) GetWebhookInfo(c *gin.Context, bot *botEntry) {
-	url, _ := h.WebhookDispatcher.target(bot)
+	url, _ := h.UpdateDispatcher.target(bot)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: WebhookInfo{
 		URL:                  url,
 		HasCustomCertificate: false,

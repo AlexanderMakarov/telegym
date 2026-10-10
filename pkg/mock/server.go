@@ -34,8 +34,8 @@ type Server struct {
 // in tests.
 func New(cfg Config) *Server {
 	store := NewStore()
-	disp := NewWebhookDispatcher(cfg.DefaultWebhookURL)
-	h := &Handlers{Store: store, WebhookDispatcher: disp}
+	disp := NewUpdateDispatcher(cfg.DefaultWebhookURL)
+	h := &Handlers{Store: store, UpdateDispatcher: disp}
 
 	if !cfg.Quiet {
 		gin.SetMode(gin.DebugMode)

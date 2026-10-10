@@ -11,17 +11,29 @@ import (
 	"time"
 )
 
-// WebhookDispatcher delivers Updates to a bot's webhook, or queues them for
+// UpdateDispatcher delivers Updates to a bot's webhook, or queues them for
 // polling when no webhook is configured.
-type WebhookDispatcher struct {
+type UpdateDispatcher struct {
 	client      *http.Client
 	defaultURL  string // fallback if a bot never called setWebhook
 	logFailures bool
 	metrics     *Metrics // optional - instruments dispatch counts and duration
 }
 
+// WebhookDispatcher is an alias for UpdateDispatcher.
+//
+// Deprecated: Use UpdateDispatcher instead.
+type WebhookDispatcher = UpdateDispatcher
+
+// NewWebhookDispatcher creates an UpdateDispatcher.
+//
+// Deprecated: Use NewUpdateDispatcher instead.
 func NewWebhookDispatcher(defaultURL string) *WebhookDispatcher {
-	return &WebhookDispatcher{
+	return NewUpdateDispatcher(defaultURL)
+}
+
+func NewUpdateDispatcher(defaultURL string) *UpdateDispatcher {
+	return &UpdateDispatcher{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -35,7 +47,7 @@ func NewWebhookDispatcher(defaultURL string) *WebhookDispatcher {
 	}
 }
 
-func (d *WebhookDispatcher) target(bot *botEntry) (url, secret string) {
+func (d *UpdateDispatcher) target(bot *botEntry) (url, secret string) {
 	bot.msgMu.RLock()
 	defer bot.msgMu.RUnlock()
 	url, secret = bot.webhookURL, bot.secretToken
@@ -46,14 +58,14 @@ func (d *WebhookDispatcher) target(bot *botEntry) (url, secret string) {
 	return url, secret
 }
 
-func (d *WebhookDispatcher) hasTarget(bot *botEntry) bool {
+func (d *UpdateDispatcher) hasTarget(bot *botEntry) bool {
 	url, _ := d.target(bot)
 	return url != ""
 }
 
 // Deliver posts the update to the bot's webhook and returns its HTTP status,
 // or queues it for getUpdates and returns zero.
-func (d *WebhookDispatcher) Deliver(ctx context.Context, bot *botEntry, upd Update) (int, error) {
+func (d *UpdateDispatcher) Deliver(ctx context.Context, bot *botEntry, upd Update) (int, error) {
 	url, secret := d.target(bot)
 	if url == "" {
 		bot.updates.Enqueue(upd)
@@ -103,7 +115,7 @@ func (d *WebhookDispatcher) Deliver(ctx context.Context, bot *botEntry, upd Upda
 	return resp.StatusCode, nil
 }
 
-func (d *WebhookDispatcher) observe(result string, dur time.Duration) {
+func (d *UpdateDispatcher) observe(result string, dur time.Duration) {
 	if d.metrics == nil {
 		return
 	}

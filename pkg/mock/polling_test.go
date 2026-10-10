@@ -288,10 +288,10 @@ func TestPollingWaitsForUpdateAndCancels(t *testing.T) {
 	select {
 	case rec := <-done:
 		if updates := decodeUpdates(t, rec); len(updates) != 0 {
-			t.Fatalf("cancelled empty poll returned updates: %+v", updates)
+			t.Fatalf("canceled empty poll returned updates: %+v", updates)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("cancelled poll did not return")
+		t.Fatal("canceled poll did not return")
 	}
 
 	// Cancellation must release the bot so another poll can proceed.
