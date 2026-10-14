@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -164,13 +165,16 @@ func (h *chatHandlers) view(c *gin.Context) {
 
 type msgVM struct {
 	Side          string
-	Text          template.HTML // pre-rendered: HTML-escaped, /commands wrapped clickable
+	Text          template.HTML // pre-rendered: Telegram HTML sanitized or escaped + /commands
 	MessageID     int
 	Stamp         string
 	ButtonRows    [][]btnVM // preserves the bot's 2D inline-keyboard layout
 	MediaTag      string
 	StickerEmoji  string // empty if bot did not supply an emoji
 	StickerFileID string // short prefix shown when emoji is missing (debugging aid)
+	ThreadLabel   string // e.g. "Theory" / "General" when viewing All topics
+	Service       bool   // Telegram-like service row (topic created, etc.)
+	ServiceHTML   template.HTML
 }
 
 type btnVM struct {
@@ -189,6 +193,16 @@ type messagesVM struct {
 	ReplyKeyboard [][]string    // current reply keyboard rows (button texts); nil if cleared
 	Placeholder   string        // input_field_placeholder from latest reply keyboard
 	Toast         *toastVM      // pending callback toast for this chat, drained on read
+	Typing        bool          // bot sendChatAction typing bubble visible
+	TypingLabel   string        // e.g. "…typing"
+	Topics        []topicTabVM  // Theory / General / All filter tabs (OOB)
+	ThreadFilter  string        // "" = all, "0" = general, else thread id
+}
+
+type topicTabVM struct {
+	Label  string
+	Href   string
+	Active bool
 }
 
 type toastVM struct {
@@ -200,14 +214,27 @@ type toastVM struct {
 // merged and sorted chronologically. Called every 1s via HTMX polling.
 // Also computes the current reply-keyboard state and emits it as an
 // out-of-band swap so the chat input area updates on the same poll.
+//
+// Query `thread`: empty = All; "0" = General (no message_thread_id); else filter by thread id.
 func (h *chatHandlers) messages(c *gin.Context) {
 	token := c.Param("token")
 	chatID, _ := strconv.ParseInt(c.Param("chat_id"), 10, 64)
 	name := c.DefaultQuery("name", "andrii")
+	threadFilter := c.Query("thread")
 	bot := h.store.Bot(token)
 
 	botMsgs := bot.Messages(chatID, 200)
-	items := mergeChatLog(botMsgs, bot.Inputs(chatID), token, chatID, name)
+	topicByID := map[int]string{}
+	for _, t := range bot.ForumTopics(chatID) {
+		topicByID[t.MessageThreadID] = t.Name
+	}
+	botMsgs = filterMessagesByThread(botMsgs, threadFilter)
+	userInputs := bot.Inputs(chatID)
+	if threadFilter != "" && threadFilter != "0" {
+		// User inputs are General-only in the mock UI.
+		userInputs = nil
+	}
+	items := mergeChatLog(botMsgs, userInputs, token, chatID, name, topicByID, threadFilter == "")
 	emptyHint := renderTextWithCommands(
 		"empty chat - start with /start (or any /command in text)",
 		token, chatID, name,
@@ -222,6 +249,26 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		toast = &toastVM{Text: t.Text, ShowAlert: t.ShowAlert}
 	}
 
+	threadIDFilter := 0
+	if threadFilter != "" && threadFilter != "0" {
+		threadIDFilter, _ = strconv.Atoi(threadFilter)
+	}
+	typingActive := false
+	typingLabel := ""
+	if ty, ok := bot.ActiveTyping(chatID, threadIDFilter); ok {
+		// All: any typing. General tab: General-only. Named topic: that thread only
+		// (do not show General MessageThreadID==0 typing on Theory/named tabs).
+		show := threadFilter == "" ||
+			(threadFilter == "0" && ty.MessageThreadID == 0) ||
+			(threadIDFilter != 0 && ty.MessageThreadID == threadIDFilter)
+		if show {
+			typingActive = true
+			typingLabel = "…typing"
+		}
+	}
+
+	topics := buildTopicTabs(token, chatID, name, threadFilter, bot.ForumTopics(chatID))
+
 	render(c, "messages.html", messagesVM{
 		Items:         items,
 		Token:         token,
@@ -231,7 +278,53 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		ReplyKeyboard: kbRows,
 		Placeholder:   placeholder,
 		Toast:         toast,
+		Typing:        typingActive,
+		TypingLabel:   typingLabel,
+		Topics:        topics,
+		ThreadFilter:  threadFilter,
 	})
+}
+
+func filterMessagesByThread(msgs []Message, threadFilter string) []Message {
+	if threadFilter == "" {
+		return msgs
+	}
+	wantGeneral := threadFilter == "0"
+	wantID, _ := strconv.Atoi(threadFilter)
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if wantGeneral {
+			if m.MessageThreadID == 0 {
+				out = append(out, m)
+			}
+			continue
+		}
+		if m.MessageThreadID == wantID {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func buildTopicTabs(token string, chatID int64, name, active string, topics []ForumTopic) []topicTabVM {
+	base := fmt.Sprintf("/debug/chat/%s/%d/messages?name=%s", token, chatID, name)
+	tabs := []topicTabVM{
+		{Label: "All", Href: base, Active: active == ""},
+		{Label: "General", Href: base + "&thread=0", Active: active == "0"},
+	}
+	for _, t := range topics {
+		id := strconv.Itoa(t.MessageThreadID)
+		label := t.Name
+		if label == "" {
+			label = "Topic " + id
+		}
+		tabs = append(tabs, topicTabVM{
+			Label:  label,
+			Href:   base + "&thread=" + id,
+			Active: active == id,
+		})
+	}
+	return tabs
 }
 
 // currentReplyKeyboard derives the chat-input keyboard from message
@@ -358,7 +451,7 @@ func (h *chatHandlers) click(c *gin.Context) {
 // we collapse them to a single visual entry per (chat_id, message_id) --
 // the LATEST one in chronological order wins, matching how a real
 // Telegram client replaces the bubble in place when a message is edited.
-func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatID int64, name string) []msgVM {
+func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatID int64, name string, topicByID map[int]string, labelThreads bool) []msgVM {
 	type entry struct {
 		seq int
 		vm  msgVM
@@ -378,10 +471,24 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 		seenID[m.MessageID] = true
 		v := msgVM{
 			Side:      "bot",
-			Text:      renderTextWithCommands(pickText(m), token, chatID, name),
 			MessageID: m.MessageID,
 			Stamp:     time.Unix(m.Date, 0).Format("15:04:05"),
 			MediaTag:  mediaTag(m),
+		}
+		if m.ServiceType == "forum_topic_created" && m.ServiceTopicThreadID != 0 {
+			v.Service = true
+			v.ServiceHTML = renderTopicCreatedService(m.ServiceTopicName, m.ServiceTopicThreadID, token, chatID, name)
+		} else {
+			v.Text = renderTextWithCommands(pickText(m), token, chatID, name)
+		}
+		if labelThreads {
+			if m.MessageThreadID == 0 {
+				v.ThreadLabel = "General"
+			} else if n, ok := topicByID[m.MessageThreadID]; ok && n != "" {
+				v.ThreadLabel = n
+			} else {
+				v.ThreadLabel = "topic:" + strconv.Itoa(m.MessageThreadID)
+			}
 		}
 		if m.Sticker != nil {
 			// Only show emoji if the bot actually supplied one. Otherwise
@@ -441,16 +548,16 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 // `https://x/y` or paths inside messages.
 var commandRe = regexp.MustCompile(`/[a-zA-Z][a-zA-Z0-9_]*`)
 
-// renderTextWithCommands HTML-escapes text, then wraps every /command match
-// in an HTMX-driven clickable element that POSTs to /send via the same
-// path as the compose form. Newlines become <br> so multi-line bot replies
-// render with their original structure.
-//
-// Caller passes (token, chatID, name) so the rendered button targets the
-// correct chat without any per-element template lookup.
+// renderTextWithCommands renders bot/user text for the debug chat.
+// Telegram parse_mode=HTML bodies are sanitized to a safe subset; plain text
+// is escaped. /commands become HTMX clickable (plain path only — avoids
+// wrapping inside already-sanitized markup).
 func renderTextWithCommands(text, token string, chatID int64, name string) template.HTML {
 	if text == "" {
 		return ""
+	}
+	if looksLikeTelegramHTML(text) {
+		return template.HTML(sanitizeTelegramHTML(text))
 	}
 	escaped := template.HTMLEscapeString(text)
 
@@ -466,6 +573,19 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 	})
 	out = strings.ReplaceAll(out, "\n", "<br>")
 	return template.HTML(out)
+}
+
+// renderTopicCreatedService mirrors Telegram's “The topic "X" was created”
+// with a clickable name that switches the debug-chat thread filter.
+func renderTopicCreatedService(topicName string, threadID int, token string, chatID int64, name string) template.HTML {
+	href := fmt.Sprintf("/debug/chat/%s/%d/messages?name=%s&thread=%d",
+		url.PathEscape(token), chatID, url.QueryEscape(name), threadID)
+	hrefJSON, _ := json.Marshal(href)
+	return template.HTML(fmt.Sprintf(
+		`The topic <a class="topic-link" href="#" onclick="telegym.setThreadFilter(%s); return false;">%s</a> was created`,
+		hrefJSON,
+		template.HTMLEscapeString(topicName),
+	))
 }
 
 func pickText(m Message) string {

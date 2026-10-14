@@ -54,6 +54,15 @@ type botEntry struct {
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
 
+	// Forum topics created via createForumTopic (chatID → threadID → topic).
+	topicsMu    sync.Mutex
+	forumTopics map[int64]map[int]ForumTopic // chatID → threadID → topic
+	topicIDSeed int                          // last allocated message_thread_id (per bot)
+
+	// Typing indicators from sendChatAction (cleared on next outbound message or TTL).
+	typingMu sync.Mutex
+	typing   map[string]ChatTyping // key: chatID:threadID
+
 	maxMessages int
 	maxInputs   int
 }
@@ -229,10 +238,13 @@ func (b *botEntry) Webhook() (url, secret string) {
 // counter, even when MessageID collides (the case for editMessage* --
 // the bot edits message X and we store the new state as a separate
 // entry with the same MessageID but a higher EventSeq).
+//
+// Clears any typing indicator for the same chat (and matching thread when set).
 func (b *botEntry) AppendMessage(m Message) {
 	if b.parent != nil {
 		m.EventSeq = int64(b.parent.NextMessageID())
 	}
+	b.ClearTyping(m.Chat.ID, m.MessageThreadID)
 	b.msgMu.Lock()
 	b.messages = append(b.messages, m)
 	if over := len(b.messages) - b.maxMessages; over > 0 {
@@ -244,6 +256,190 @@ func (b *botEntry) AppendMessage(m Message) {
 	if b.parent != nil && b.parent.Proxy != nil {
 		b.parent.Proxy.Dispatch(b.token, m)
 	}
+}
+
+func typingKey(chatID int64, threadID int) string {
+	return strconv.FormatInt(chatID, 10) + ":" + strconv.Itoa(threadID)
+}
+
+const typingMinVisibleSec int64 = 1
+
+// SetTyping records a sendChatAction typing state (default TTL 5s).
+// StickyUntil keeps the bubble visible for at least typingMinVisibleSec even if
+// the next outbound message arrives immediately (HTMX polls every ~500ms).
+func (b *botEntry) SetTyping(chatID int64, threadID int, action string, ttlSec int64) {
+	if chatID == 0 || action == "" {
+		return
+	}
+	if ttlSec <= 0 {
+		ttlSec = 5
+	}
+	now := time.Now().Unix()
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	if b.typing == nil {
+		b.typing = map[string]ChatTyping{}
+	}
+	b.typing[typingKey(chatID, threadID)] = ChatTyping{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Action:          action,
+		Since:           now,
+		Until:           now + ttlSec,
+		StickyUntil:     now + typingMinVisibleSec,
+	}
+}
+
+// ClearTyping drops typing for chatID once the sticky window has elapsed.
+// When threadID is 0, clears General and any thread-scoped typing for that chat.
+// If sticky time remains, Until is clamped to StickyUntil instead of deleting.
+func (b *botEntry) ClearTyping(chatID int64, threadID int) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	if b.typing == nil {
+		return
+	}
+	now := time.Now().Unix()
+	clearKey := func(k string) {
+		t, ok := b.typing[k]
+		if !ok {
+			return
+		}
+		if t.StickyUntil > now {
+			t.Until = t.StickyUntil
+			b.typing[k] = t
+			return
+		}
+		delete(b.typing, k)
+	}
+	if threadID != 0 {
+		clearKey(typingKey(chatID, threadID))
+		clearKey(typingKey(chatID, 0))
+		return
+	}
+	prefix := strconv.FormatInt(chatID, 10) + ":"
+	for k := range b.typing {
+		if strings.HasPrefix(k, prefix) {
+			clearKey(k)
+		}
+	}
+}
+
+// ActiveTyping returns a non-expired typing indicator for chatID.
+// Prefer thread-scoped match when threadFilter > 0; otherwise any for the chat.
+func (b *botEntry) ActiveTyping(chatID int64, threadFilter int) (ChatTyping, bool) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	now := time.Now().Unix()
+	if b.typing == nil {
+		return ChatTyping{}, false
+	}
+	alive := func(t ChatTyping) bool { return t.Until > now }
+	if threadFilter > 0 {
+		if t, ok := b.typing[typingKey(chatID, threadFilter)]; ok && alive(t) {
+			return t, true
+		}
+	}
+	if t, ok := b.typing[typingKey(chatID, 0)]; ok && alive(t) {
+		return t, true
+	}
+	// Any thread for this chat when viewing "All".
+	if threadFilter == 0 {
+		for _, t := range b.typing {
+			if t.ChatID == chatID && alive(t) {
+				return t, true
+			}
+		}
+	}
+	return ChatTyping{}, false
+}
+
+// CreateForumTopic allocates a positive message_thread_id and stores the topic.
+func (b *botEntry) CreateForumTopic(chatID int64, name string) ForumTopic {
+	b.topicsMu.Lock()
+	defer b.topicsMu.Unlock()
+	if b.forumTopics == nil {
+		b.forumTopics = map[int64]map[int]ForumTopic{}
+	}
+	if b.forumTopics[chatID] == nil {
+		b.forumTopics[chatID] = map[int]ForumTopic{}
+	}
+	// Reuse existing topic with the same name (idempotent for Theory recreate).
+	for _, t := range b.forumTopics[chatID] {
+		if t.Name == name {
+			return t
+		}
+	}
+	b.topicIDSeed++
+	if b.topicIDSeed < 1 {
+		b.topicIDSeed = 1
+	}
+	t := ForumTopic{
+		MessageThreadID: b.topicIDSeed,
+		Name:            name,
+		IconColor:       7322096,
+	}
+	b.forumTopics[chatID][t.MessageThreadID] = t
+	return t
+}
+
+// AppendForumTopicCreatedService adds a General-chat service row like Telegram's
+// “The topic was created”, with metadata for a clickable topic name in debug UI.
+func (b *botEntry) AppendForumTopicCreatedService(chatID int64, topic ForumTopic) {
+	if chatID == 0 || topic.MessageThreadID == 0 || topic.Name == "" {
+		return
+	}
+	msgID := 0
+	if b.parent != nil {
+		msgID = b.parent.NextMessageID()
+	}
+	b.AppendMessage(Message{
+		MessageID:            msgID,
+		Date:                 time.Now().Unix(),
+		Chat:                 Chat{ID: chatID, Type: "private"},
+		Text:                 `The topic "` + topic.Name + `" was created`,
+		ServiceType:          "forum_topic_created",
+		ServiceTopicName:     topic.Name,
+		ServiceTopicThreadID: topic.MessageThreadID,
+	})
+}
+
+// ForumTopics lists topics for a chat (stable order by thread id).
+func (b *botEntry) ForumTopics(chatID int64) []ForumTopic {
+	b.topicsMu.Lock()
+	defer b.topicsMu.Unlock()
+	m := b.forumTopics[chatID]
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]ForumTopic, 0, len(m))
+	for _, t := range m {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].MessageThreadID < out[j].MessageThreadID })
+	return out
+}
+
+// DeleteMessage removes every store entry for chatID+messageID (including
+// prior edit revisions). Matches Bot API deleteMessage: the bubble disappears
+// from /debug/chat. Returns false when nothing matched.
+func (b *botEntry) DeleteMessage(chatID int64, messageID int) bool {
+	if chatID == 0 || messageID == 0 {
+		return false
+	}
+	b.msgMu.Lock()
+	defer b.msgMu.Unlock()
+	kept := b.messages[:0]
+	removed := false
+	for _, m := range b.messages {
+		if m.Chat.ID == chatID && m.MessageID == messageID {
+			removed = true
+			continue
+		}
+		kept = append(kept, m)
+	}
+	b.messages = kept
+	return removed
 }
 
 // Messages returns up to `limit` most-recent messages for chatID. If chatID

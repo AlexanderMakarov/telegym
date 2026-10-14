@@ -3,6 +3,7 @@ package mock
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -264,5 +265,178 @@ func TestInjectUpdateFiresWebhook(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("callback webhook never fired within 2s")
+	}
+}
+
+func TestCreateForumTopic_positiveThreadID(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	token := "123:test"
+	body := `{"chat_id":42,"name":"Theory"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/createForumTopic", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var env APIResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(env.Result)
+	var topic ForumTopic
+	if err := json.Unmarshal(raw, &topic); err != nil {
+		t.Fatal(err)
+	}
+	if topic.MessageThreadID == 0 || topic.Name != "Theory" {
+		t.Fatalf("want positive Theory thread, got %+v", topic)
+	}
+	// Idempotent same name
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/bot"+token+"/createForumTopic", strings.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec2, req2)
+	var env2 APIResponse
+	_ = json.Unmarshal(rec2.Body.Bytes(), &env2)
+	raw2, _ := json.Marshal(env2.Result)
+	var topic2 ForumTopic
+	_ = json.Unmarshal(raw2, &topic2)
+	if topic2.MessageThreadID != topic.MessageThreadID {
+		t.Fatalf("reuse thread id: got %d want %d", topic2.MessageThreadID, topic.MessageThreadID)
+	}
+}
+
+func TestSendChatAction_setsTypingClearedOnSend(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	token := "123:test"
+	bot := srv.Store().Bot(token)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/sendChatAction",
+		strings.NewReader(`{"chat_id":7,"action":"typing"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sendChatAction status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := bot.ActiveTyping(7, 0); !ok {
+		t.Fatal("expected active typing after sendChatAction")
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/bot"+token+"/sendMessage",
+		strings.NewReader(`{"chat_id":7,"text":"hello"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec2, req2)
+	// Sticky window keeps “…typing” visible briefly so HTMX polls can see it.
+	if _, ok := bot.ActiveTyping(7, 0); !ok {
+		t.Fatal("typing should remain during sticky min-visible window after sendMessage")
+	}
+	time.Sleep(time.Duration(typingMinVisibleSec+1) * time.Second)
+	if _, ok := bot.ActiveTyping(7, 0); ok {
+		t.Fatal("typing must clear after sticky window")
+	}
+}
+
+func TestSendChatAction_messagesHTMLShowsTypingBubble(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	token := "123:typing-html"
+	chatID := int64(99)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/sendChatAction",
+		strings.NewReader(`{"chat_id":99,"action":"typing"}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sendChatAction status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	recMsg := httptest.NewRecorder()
+	reqMsg := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/debug/chat/%s/%d/messages?name=test", token, chatID), nil)
+	srv.Handler().ServeHTTP(recMsg, reqMsg)
+	if recMsg.Code != http.StatusOK {
+		t.Fatalf("messages status=%d body=%s", recMsg.Code, recMsg.Body.String())
+	}
+	body := recMsg.Body.String()
+	if !strings.Contains(body, "…typing") && !strings.Contains(body, "typing-dots") {
+		t.Fatalf("messages HTML must include typing bubble (…typing or typing-dots), got %s", body)
+	}
+}
+
+func TestDeleteMessage_removesFromChatHTML(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	token := "123:delete"
+	bot := srv.Store().Bot(token)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/sendMessage",
+		strings.NewReader(`{"chat_id":42,"text":"<i>temporal</i>","reply_markup":{"inline_keyboard":[[{"text":"Cancel","callback_data":"settings:cancel"}]]}}`))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sendMessage status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var env APIResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &env)
+	raw, _ := json.Marshal(env.Result)
+	var sent Message
+	_ = json.Unmarshal(raw, &sent)
+	if sent.MessageID == 0 {
+		t.Fatal("expected message_id")
+	}
+	if n := len(bot.Messages(42, 10)); n != 1 {
+		t.Fatalf("stored msgs=%d want 1", n)
+	}
+
+	recDel := httptest.NewRecorder()
+	delBody := fmt.Sprintf(`{"chat_id":42,"message_id":%d}`, sent.MessageID)
+	reqDel := httptest.NewRequest(http.MethodPost, "/bot"+token+"/deleteMessage", strings.NewReader(delBody))
+	reqDel.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(recDel, reqDel)
+	if recDel.Code != http.StatusOK {
+		t.Fatalf("deleteMessage status=%d body=%s", recDel.Code, recDel.Body.String())
+	}
+	if n := len(bot.Messages(42, 10)); n != 0 {
+		t.Fatalf("after delete stored msgs=%d want 0", n)
+	}
+
+	recMsg := httptest.NewRecorder()
+	reqMsg := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/debug/chat/%s/42/messages?name=test", token), nil)
+	srv.Handler().ServeHTTP(recMsg, reqMsg)
+	if strings.Contains(recMsg.Body.String(), "temporal") || strings.Contains(recMsg.Body.String(), "Cancel") {
+		t.Fatalf("deleted chrome must not remain in messages HTML: %s", recMsg.Body.String())
+	}
+}
+
+func TestCreateForumTopic_serviceMessageInChat(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	token := "123:topic-svc"
+	body := `{"chat_id":55,"name":"Theory"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/createForumTopic", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var env APIResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &env)
+	raw, _ := json.Marshal(env.Result)
+	var topic ForumTopic
+	_ = json.Unmarshal(raw, &topic)
+
+	recMsg := httptest.NewRecorder()
+	reqMsg := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/debug/chat/%s/55/messages?name=test", token), nil)
+	srv.Handler().ServeHTTP(recMsg, reqMsg)
+	htmlBody := recMsg.Body.String()
+	if !strings.Contains(htmlBody, "was created") || !strings.Contains(htmlBody, "topic-link") {
+		t.Fatalf("want topic-created service row, got %s", htmlBody)
+	}
+	if !strings.Contains(htmlBody, fmt.Sprintf("thread=%d", topic.MessageThreadID)) {
+		t.Fatalf("topic link must target thread %d: %s", topic.MessageThreadID, htmlBody)
 	}
 }

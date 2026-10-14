@@ -44,34 +44,37 @@
   {{end}}
 {{end}}
 
+{{/*
+  Topics filter tabs (All / General / named forum topics). OOB so the header
+  strip updates on the same poll as messages.
+*/}}
+<div id="topic-tabs" hx-swap-oob="true">
+  {{range .Topics}}
+    <button type="button"
+            class="topic-tab{{if .Active}} active{{end}}"
+            onclick="telegym.setThreadFilter({{.Href | toJSON}})">{{.Label}}</button>
+  {{end}}
+</div>
+
 {{if not .Items}}
   <div class="empty">{{.EmptyHint}}</div>
 {{end}}
 {{range .Items}}
-  <div class="msg {{.Side}}">
-    {{if .StickerEmoji}}
-      <div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>
-    {{else if .StickerFileID}}
-      <span class="sticker-id" title="bot sent a sticker by cached file_id; no emoji metadata available in mock">🎴 {{.StickerFileID}}</span>
-    {{else if .MediaTag}}
-      <span class="media-tag">{{.MediaTag}}</span>
-    {{end}}
-    {{if .Text}}<div>{{.Text}}</div>{{end}}
-    {{if .ButtonRows}}
-      <div class="kbd">
-        {{range .ButtonRows}}
-          <div class="kbd-row">
-            {{range .}}
-              <button class="kbd-btn{{with .Style}} kbd-btn-{{.}}{{end}}"
+  {{if .Service}}
+  <div class="msg service">
+    <div class="service-text">{{.ServiceHTML}}</div>
+    <span class="ts">{{.Stamp}}</span>
+  </div>
+  {{else}}
+  <div class="msg {{.Side}}">{{if .ThreadLabel}}<span class="thread-tag">{{.ThreadLabel}}</span>{{end}}{{if .StickerEmoji}}<div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>{{else if .StickerFileID}}<span class="sticker-id" title="bot sent a sticker by cached file_id; no emoji metadata available in mock">🎴 {{.StickerFileID}}</span>{{else if .MediaTag}}<span class="media-tag">{{.MediaTag}}</span>{{end}}{{if .Text}}<div class="msg-text">{{.Text}}</div>{{end}}{{if .ButtonRows}}<div class="kbd">{{range .ButtonRows}}<div class="kbd-row">{{range .}}<button class="kbd-btn{{with .Style}} kbd-btn-{{.}}{{end}}"
                       hx-post="/debug/chat/{{$.Token}}/{{$.ChatID}}/click"
                       hx-vals='{"data":{{.CallbackData | toJSON}},"message_id":{{.MessageID}},"name":"{{$.Name}}"}'
                       hx-swap="none"
-                      onclick="this.classList.add('flashed'); setTimeout(()=>this.classList.remove('flashed'), 450)">{{.Text}}</button>
-            {{end}}
-          </div>
-        {{end}}
-      </div>
-    {{end}}
-    <span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span>
+                      onclick="this.classList.add('flashed'); setTimeout(()=>this.classList.remove('flashed'), 450)">{{.Text}}</button>{{end}}</div>{{end}}</div>{{end}}<span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span></div>
+  {{end}}
+{{end}}
+{{if .Typing}}
+  <div class="msg bot typing" aria-live="polite">
+    <div class="typing-dots">{{.TypingLabel}}</div>
   </div>
 {{end}}

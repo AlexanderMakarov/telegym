@@ -12,17 +12,19 @@
     header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
     header .meta { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #777; }
     header a { color: #2a7fff; text-decoration: none; font-size: 0.85rem; }
-    #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-    .msg { max-width: 75%; padding: 0.5rem 0.75rem; border-radius: 12px; word-wrap: break-word; }
+    #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+    /* Compact bubble chrome; pre-wrap only on .msg-text so template whitespace between text/kbd/ts does not inflate height. */
+    .msg { max-width: 75%; padding: 0.35rem 0.65rem; border-radius: 12px; word-wrap: break-word; line-height: 1.35; }
+    .msg-text { white-space: pre-wrap; }
     .msg.bot { background: #fff; align-self: flex-start; border-bottom-left-radius: 2px; }
     .msg.user { background: #2a7fff; color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
-    .msg .ts { display: block; font-size: 0.7rem; color: #999; margin-top: 0.2rem; font-family: ui-monospace, monospace; }
+    .msg .ts { display: block; font-size: 0.7rem; color: #999; margin-top: 0.15rem; font-family: ui-monospace, monospace; }
     .msg.user .ts { color: rgba(255,255,255,0.7); }
-    .msg img { max-width: 100%; border-radius: 4px; margin-top: 0.3rem; }
-    .kbd { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
-    .kbd-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .msg img { max-width: 100%; border-radius: 4px; margin-top: 0.25rem; }
+    .kbd { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.3rem; }
+    .kbd-row { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     /* Default look (no InlineKeyboardButton.style field) -- neutral gray. */
-    .kbd-row button { flex: 1 1 auto; padding: 0.35rem 0.6rem; font-size: 0.85rem; background: #efeef0; color: #555; border: 1px solid #c8c8cc; border-radius: 4px; cursor: pointer; font-family: inherit; transition: background 350ms ease, color 350ms ease, transform 200ms ease; }
+    .kbd-row button { flex: 1 1 auto; padding: 0.3rem 0.55rem; font-size: 0.85rem; background: #efeef0; color: #555; border: 1px solid #c8c8cc; border-radius: 4px; cursor: pointer; font-family: inherit; transition: background 350ms ease, color 350ms ease, transform 200ms ease; }
     .kbd-row button:hover { background: #c8c8cc; color: #000; }
     /* Bot API style variants. */
     .kbd-row button.kbd-btn-primary { color: #2a7fff; border-color: #2a7fff; }
@@ -87,6 +89,25 @@
     .reply-btn { flex: 1; padding: 0.6rem 0.5rem; font-size: 0.95rem; background: #fff; color: #1a1a1a; border: none; border-radius: 6px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
     .reply-btn:hover { background: #f5f5f5; }
     .reply-btn:active { background: #e5e5e5; }
+    /* Topics tabs + typing indicator (debug-chat parity with Bot API). */
+    #topic-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.45rem 1rem; background: #fff; border-bottom: 1px solid #ddd; }
+    #topic-tabs:empty { display: none; }
+    .topic-tab { padding: 0.3rem 0.7rem; font-size: 0.8rem; border: 1px solid #c8c8cc; border-radius: 999px; background: #efeef0; color: #444; cursor: pointer; font-family: inherit; }
+    .topic-tab:hover { background: #e0e0e4; }
+    .topic-tab.active { background: #2a7fff; color: #fff; border-color: #2a7fff; }
+    .thread-tag { display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; background: #eef4ff; color: #2a7fff; margin-bottom: 0.25rem; font-family: ui-monospace, monospace; }
+    .msg.typing { opacity: 0.85; font-style: italic; color: #666; }
+    .typing-dots { letter-spacing: 0.02em; animation: typingPulse 1.2s ease-in-out infinite; }
+    @keyframes typingPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+    .msg.service { align-self: center; max-width: 90%; background: transparent; color: #777; font-size: 0.85rem; text-align: center; padding: 0.35rem 0.5rem; }
+    .msg.service .service-text { line-height: 1.35; }
+    .msg.service .topic-link { color: #2a7fff; font-weight: 600; text-decoration: none; cursor: pointer; }
+    .msg.service .topic-link:hover { text-decoration: underline; }
+    .msg.service .ts { color: #aaa; }
+    .msg.bot a { color: #2a7fff; }
+    .msg.bot i, .msg.bot em { font-style: italic; }
+    .msg.bot b, .msg.bot strong { font-weight: 600; }
+    .msg.bot code, .msg.bot pre { font-family: ui-monospace, monospace; font-size: 0.9em; background: #f0f0f0; border-radius: 3px; padding: 0.05rem 0.25rem; }
   </style>
 </head>
 <body hx-ext="morph">
@@ -104,8 +125,10 @@
   <div id="toast"></div>
   <div id="alert"></div>
 
+  <div id="topic-tabs"></div>
+
   <div id="messages"
-       hx-get="/debug/chat/{{.Token}}/{{.ChatID}}/messages"
+       hx-get="/debug/chat/{{.Token}}/{{.ChatID}}/messages?name={{.Name}}"
        hx-trigger="load, every 500ms"
        hx-swap="morph:innerHTML"
        hx-on::before-swap="this._stick = this.scrollHeight - this.scrollTop - this.clientHeight < 50"
@@ -284,7 +307,20 @@
         if (e.key === 'Escape' && !list.hidden) close();
       });
 
-      window.telegym = { toggleCmdMenu: () => list.hidden ? open() : close() };
+      function setThreadFilter(href) {
+        const el = document.getElementById('messages');
+        if (!el || !href) return;
+        el.setAttribute('hx-get', href);
+        if (window.htmx) {
+          htmx.process(el);
+          htmx.ajax('GET', href, { target: '#messages', swap: 'morph:innerHTML' });
+        }
+      }
+
+      window.telegym = {
+        toggleCmdMenu: () => list.hidden ? open() : close(),
+        setThreadFilter,
+      };
     })();
   </script>
 </body>

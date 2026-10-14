@@ -169,6 +169,9 @@ func (h *Handlers) SendMessage(c *gin.Context, bot *botEntry) {
 	m.Text = toString(body["text"])
 	m.Entities = parseEntities(body["entities"])
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
+	if tid := toInt(body["message_thread_id"]); tid != 0 {
+		m.MessageThreadID = tid
+	}
 
 	bot.AppendMessage(m)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
@@ -230,7 +233,22 @@ func (h *Handlers) EditMessageMedia(c *gin.Context, bot *botEntry) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
 }
 
-func (h *Handlers) DeleteMessage(c *gin.Context, _ *botEntry) {
+func (h *Handlers) DeleteMessage(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, 400, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	msgID := toInt(body["message_id"])
+	if chatID == 0 || msgID == 0 {
+		errResp(c, 400, "Bad Request: chat_id and message_id are required")
+		return
+	}
+	if !bot.DeleteMessage(chatID, msgID) {
+		errResp(c, 400, "Bad Request: message to delete not found")
+		return
+	}
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
@@ -269,6 +287,9 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	m.Text = m.Caption
 	m.Entities = parseEntities(body["caption_entities"])
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
+	if tid := toInt(body["message_thread_id"]); tid != 0 {
+		m.MessageThreadID = tid
+	}
 
 	// If this was a multipart upload, capture the actual bytes into the
 	// FileStore so telegym-proxy can later forward the real file to Telegram.
@@ -418,8 +439,57 @@ func (h *Handlers) GetWebhookInfo(c *gin.Context, bot *botEntry) {
 
 // GenericOK handles methods without a custom implementation but that bots
 // commonly call. Always returns {ok:true, result:true} which is the right
-// shape for the most common boolean-returning methods (sendChatAction,
-// pinChatMessage, promoteChatMember, etc).
+// shape for the most common boolean-returning methods (pinChatMessage,
+// promoteChatMember, etc). sendChatAction has an explicit handler below.
 func (h *Handlers) GenericOK(c *gin.Context, _ *botEntry) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
+}
+
+// SendChatAction records a typing/“working” indicator for the debug-chat UI
+// (cleared when the next outbound message arrives or after a short TTL).
+func (h *Handlers) SendChatAction(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, 400, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	if chatID == 0 {
+		errResp(c, 400, "Bad Request: chat_id is required")
+		return
+	}
+	action := toString(body["action"])
+	if action == "" {
+		action = "typing"
+	}
+	threadID := toInt(body["message_thread_id"])
+	bot.SetTyping(chatID, threadID, action, 5)
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
+}
+
+// CreateForumTopic allocates a real message_thread_id (Topics support).
+func (h *Handlers) CreateForumTopic(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, 400, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	name := toString(body["name"])
+	if chatID == 0 || name == "" {
+		errResp(c, 400, "Bad Request: chat_id and name are required")
+		return
+	}
+	existed := false
+	for _, t := range bot.ForumTopics(chatID) {
+		if t.Name == name {
+			existed = true
+			break
+		}
+	}
+	topic := bot.CreateForumTopic(chatID, name)
+	if !existed {
+		bot.AppendForumTopicCreatedService(chatID, topic)
+	}
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: topic})
 }

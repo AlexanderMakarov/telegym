@@ -35,14 +35,15 @@ type Chat struct {
 }
 
 type Message struct {
-	MessageID   int          `json:"message_id"`
-	From        *User        `json:"from,omitempty"`
-	Date        int64        `json:"date"`
-	Chat        Chat         `json:"chat"`
-	Text        string       `json:"text,omitempty"`
-	Caption     string       `json:"caption,omitempty"`
-	Entities    []Entity     `json:"entities,omitempty"`
-	ReplyMarkup *ReplyMarkup `json:"reply_markup,omitempty"`
+	MessageID       int          `json:"message_id"`
+	From            *User        `json:"from,omitempty"`
+	Date            int64        `json:"date"`
+	Chat            Chat         `json:"chat"`
+	MessageThreadID int          `json:"message_thread_id,omitempty"`
+	Text            string       `json:"text,omitempty"`
+	Caption         string       `json:"caption,omitempty"`
+	Entities        []Entity     `json:"entities,omitempty"`
+	ReplyMarkup     *ReplyMarkup `json:"reply_markup,omitempty"`
 
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Video     *Video      `json:"video,omitempty"`
@@ -50,12 +51,36 @@ type Message struct {
 	Sticker   *Sticker    `json:"sticker,omitempty"`
 	Dice      *Dice       `json:"dice,omitempty"`
 
+	// ServiceType marks Telegram-like service rows in the debug chat
+	// (e.g. forum_topic_created). Not part of real Bot API Message JSON.
+	ServiceType          string `json:"_service_type,omitempty"`
+	ServiceTopicName     string `json:"_service_topic_name,omitempty"`
+	ServiceTopicThreadID int    `json:"_service_topic_thread_id,omitempty"`
+
 	// EventSeq is a mock-internal monotonic counter, incremented on every
 	// AppendMessage. Two entries with the same MessageID (a bot send
 	// followed by an edit of that message) get DIFFERENT EventSeq values,
 	// so pollers can distinguish them. Real Telegram has no analogous
 	// field; clients that don't care can ignore it.
 	EventSeq int64 `json:"_event_seq,omitempty"`
+}
+
+// ForumTopic is the Bot API createForumTopic result (Topics / private forum threads).
+type ForumTopic struct {
+	MessageThreadID   int    `json:"message_thread_id"`
+	Name              string `json:"name"`
+	IconColor         int    `json:"icon_color"`
+	IconCustomEmojiID string `json:"icon_custom_emoji_id,omitempty"`
+}
+
+// ChatTyping is a per-chat (optional thread) typing indicator set by sendChatAction.
+type ChatTyping struct {
+	ChatID          int64
+	MessageThreadID int
+	Action          string
+	Until           int64 // unix seconds; expired entries are ignored
+	Since           int64 // when SetTyping recorded this indicator
+	StickyUntil     int64 // ClearTyping will not drop before this (min visible window)
 }
 
 type Entity struct {
