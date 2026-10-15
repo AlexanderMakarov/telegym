@@ -170,6 +170,7 @@ type msgVM struct {
 	Stamp         string
 	ButtonRows    [][]btnVM // preserves the bot's 2D inline-keyboard layout
 	MediaTag      string
+	PhotoURL      string // /debug/files/{file_id} when sendPhoto captured bytes
 	StickerEmoji  string // empty if bot did not supply an emoji
 	StickerFileID string // short prefix shown when emoji is missing (debugging aid)
 	ThreadLabel   string // e.g. "Theory" / "General" when viewing All topics
@@ -475,6 +476,11 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 			Stamp:     time.Unix(m.Date, 0).Format("15:04:05"),
 			MediaTag:  mediaTag(m),
 		}
+		if len(m.Photo) > 0 && m.Photo[0].FileID != "" {
+			// Captured multipart bytes are served by DebugServeFile; natural
+			// width + .msg overflow-x matches Telegram wide Theory tables.
+			v.PhotoURL = "/debug/files/" + url.PathEscape(m.Photo[0].FileID)
+		}
 		if m.ServiceType == "forum_topic_created" && m.ServiceTopicThreadID != 0 {
 			v.Service = true
 			v.ServiceHTML = renderTopicCreatedService(m.ServiceTopicName, m.ServiceTopicThreadID, token, chatID, name)
@@ -581,9 +587,10 @@ func renderTopicCreatedService(topicName string, threadID int, token string, cha
 	href := fmt.Sprintf("/debug/chat/%s/%d/messages?name=%s&thread=%d",
 		url.PathEscape(token), chatID, url.QueryEscape(name), threadID)
 	hrefJSON, _ := json.Marshal(href)
+	// Escape so json.Marshal's double quotes survive inside onclick="…".
 	return template.HTML(fmt.Sprintf(
 		`The topic <a class="topic-link" href="#" onclick="telegym.setThreadFilter(%s); return false;">%s</a> was created`,
-		hrefJSON,
+		template.HTMLEscapeString(string(hrefJSON)),
 		template.HTMLEscapeString(topicName),
 	))
 }

@@ -66,11 +66,35 @@
     <span class="ts">{{.Stamp}}</span>
   </div>
   {{else}}
-  <div class="msg {{.Side}}">{{if .ThreadLabel}}<span class="thread-tag">{{.ThreadLabel}}</span>{{end}}{{if .StickerEmoji}}<div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>{{else if .StickerFileID}}<span class="sticker-id" title="bot sent a sticker by cached file_id; no emoji metadata available in mock">🎴 {{.StickerFileID}}</span>{{else if .MediaTag}}<span class="media-tag">{{.MediaTag}}</span>{{end}}{{if .Text}}<div class="msg-text">{{.Text}}</div>{{end}}{{if .ButtonRows}}<div class="kbd">{{range .ButtonRows}}<div class="kbd-row">{{range .}}<button class="kbd-btn{{with .Style}} kbd-btn-{{.}}{{end}}"
+  <div class="msg {{.Side}}">
+    {{if .ThreadLabel}}<span class="thread-tag">{{.ThreadLabel}}</span>{{end}}
+    {{if .StickerEmoji}}
+      <div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>
+    {{else if .StickerFileID}}
+      <span class="sticker-id" title="bot sent a sticker by cached file_id; no emoji metadata available in mock">🎴 {{.StickerFileID}}</span>
+    {{else if .PhotoURL}}
+      <img src="{{.PhotoURL}}" alt="photo">
+    {{else if .MediaTag}}
+      <span class="media-tag">{{.MediaTag}}</span>
+    {{end}}
+    {{if .Text}}<div class="msg-text">{{.Text}}</div>{{end}}
+    {{if .ButtonRows}}
+      <div class="kbd">
+        {{range .ButtonRows}}
+          <div class="kbd-row">
+            {{range .}}
+              <button class="kbd-btn{{with .Style}} kbd-btn-{{.}}{{end}}"
                       hx-post="/debug/chat/{{$.Token}}/{{$.ChatID}}/click"
                       hx-vals='{"data":{{.CallbackData | toJSON}},"message_id":{{.MessageID}},"name":"{{$.Name}}"}'
                       hx-swap="none"
-                      onclick="this.classList.add('flashed'); setTimeout(()=>this.classList.remove('flashed'), 450)">{{.Text}}</button>{{end}}</div>{{end}}</div>{{end}}<span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span></div>
+                      onclick="this.classList.add('flashed'); setTimeout(()=>this.classList.remove('flashed'), 450)">{{.Text}}</button>
+            {{end}}
+          </div>
+        {{end}}
+      </div>
+    {{end}}
+    <span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span>
+  </div>
   {{end}}
 {{end}}
 {{if .Typing}}
