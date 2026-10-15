@@ -561,16 +561,16 @@ var tableLikeLineRE = regexp.MustCompile(`\S+\s{2,}\S+`)
 var htmlTagRE = regexp.MustCompile(`<[^>]*>`)
 
 // renderTextWithCommands renders bot/user text for the debug chat.
-// Telegram parse_mode=HTML bodies are sanitized to a safe subset; plain text
-// is escaped. /commands become HTMX clickable (plain path only — avoids
-// wrapping inside already-sanitized markup). Space-aligned table runs are
-// wrapped in .msg-hscroll so only those regions scroll horizontally.
+// Telegram parse_mode=HTML bodies are sanitized to a safe subset (+ Theory <table>);
+// plain text is escaped. /commands become HTMX clickable (plain path only).
+// The result is split into .msg-prose / .msg-table-scroll containers so Theory
+// tables get CSS layout instead of one flat pre-wrap div (or PNG photos).
 func renderTextWithCommands(text, token string, chatID int64, name string) template.HTML {
 	if text == "" {
 		return ""
 	}
 	if looksLikeTelegramHTML(text) {
-		return template.HTML(wrapTableLikeRegions(sanitizeTelegramHTML(text), false))
+		return template.HTML(splitMessageContainers(sanitizeTelegramHTML(text), false))
 	}
 	escaped := template.HTMLEscapeString(text)
 
@@ -584,7 +584,130 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 			template.HTMLEscapeString(string(vals)), cmd,
 		)
 	})
-	return template.HTML(wrapTableLikeRegions(out, true))
+	return template.HTML(splitMessageContainers(wrapTableLikeRegions(out, true), true))
+}
+
+// splitMessageContainers turns a sanitized (or plain) body into typed blocks:
+// prose → <div class="msg-prose">…</div>, HTML <table> → scroll wrapper.
+// Already-wrapped .msg-hscroll regions (space-aligned ASCII tables) are kept as-is.
+// Prose chunks are trimmed so pack-time "\n\n" around tables does not become large
+// pre-wrap gaps in the bubble.
+func splitMessageContainers(s string, alreadyWrappedASCII bool) string {
+	if s == "" {
+		return s
+	}
+	if alreadyWrappedASCII && strings.Contains(s, `class="msg-hscroll"`) {
+		// Plain-text path already produced hscroll/pre regions; wrap leftover prose.
+		return wrapProseAroundHscroll(s)
+	}
+	if !strings.Contains(strings.ToLower(s), "<table") {
+		if prose := trimMessageProse(s); prose != "" {
+			return `<div class="msg-prose">` + prose + `</div>`
+		}
+		return ""
+	}
+	var b strings.Builder
+	rest := s
+	for {
+		lower := strings.ToLower(rest)
+		start := strings.Index(lower, "<table")
+		if start < 0 {
+			appendProseContainer(&b, rest)
+			break
+		}
+		if start > 0 {
+			appendProseContainer(&b, rest[:start])
+		}
+		endRel := strings.Index(lower[start:], "</table>")
+		if endRel < 0 {
+			// Unclosed table — treat remainder as prose.
+			appendProseContainer(&b, rest[start:])
+			break
+		}
+		end := start + endRel + len("</table>")
+		b.WriteString(`<div class="msg-table-scroll">`)
+		b.WriteString(rest[start:end])
+		b.WriteString(`</div>`)
+		rest = rest[end:]
+	}
+	return b.String()
+}
+
+func appendProseContainer(b *strings.Builder, raw string) {
+	prose := trimMessageProse(raw)
+	if prose == "" {
+		return
+	}
+	b.WriteString(`<div class="msg-prose">`)
+	b.WriteString(prose)
+	b.WriteString(`</div>`)
+}
+
+// trimMessageProse strips leading/trailing whitespace and <br> so blank lines
+// between Theory prose and <table> blocks do not inflate bubble height.
+func trimMessageProse(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		prev := s
+		s = strings.TrimSpace(s)
+		for _, p := range []string{"<br>", "<br/>", "<br />", "<br\t/>", "<br\n/>"} {
+			s = strings.TrimPrefix(s, p)
+			s = strings.TrimSuffix(s, p)
+		}
+		// Case-insensitive <br …>
+		lower := strings.ToLower(s)
+		if strings.HasPrefix(lower, "<br") {
+			if gt := strings.Index(s, ">"); gt >= 0 {
+				s = s[gt+1:]
+				continue
+			}
+		}
+		if strings.HasSuffix(lower, "<br>") || strings.HasSuffix(lower, "<br/>") || strings.HasSuffix(lower, "<br />") {
+			if i := strings.LastIndex(strings.ToLower(s), "<br"); i >= 0 {
+				s = s[:i]
+				continue
+			}
+		}
+		if s == prev {
+			return strings.TrimSpace(s)
+		}
+	}
+}
+
+// wrapProseAroundHscroll keeps .msg-hscroll blocks and wraps other runs in .msg-prose.
+func wrapProseAroundHscroll(s string) string {
+	const open = `<div class="msg-hscroll">`
+	var b strings.Builder
+	rest := s
+	for {
+		start := strings.Index(rest, open)
+		if start < 0 {
+			appendProseContainer(&b, rest)
+			break
+		}
+		if start > 0 {
+			appendProseContainer(&b, rest[:start])
+		}
+		// Find matching close for this hscroll div (simple depth scan).
+		i := start + len(open)
+		depth := 1
+		for i < len(rest) && depth > 0 {
+			if strings.HasPrefix(rest[i:], "<div") {
+				depth++
+				i += 4
+				continue
+			}
+			if strings.HasPrefix(rest[i:], "</div>") {
+				depth--
+				i += len("</div>")
+				continue
+			}
+			i++
+		}
+		b.WriteString(rest[start:i])
+		rest = rest[i:]
+	}
+	return b.String()
 }
 
 // wrapTableLikeRegions wraps ≥2 consecutive column-aligned lines in

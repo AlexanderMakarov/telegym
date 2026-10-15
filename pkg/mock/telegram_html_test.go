@@ -40,4 +40,49 @@ func TestRenderTextWithCommands_htmlPath(t *testing.T) {
 	if !strings.Contains(got, "<i>Theory</i>") || !strings.Contains(got, "href=") {
 		t.Fatalf("expected rendered HTML: %s", got)
 	}
+	if !strings.Contains(got, `class="msg-prose"`) {
+		t.Fatalf("prose must be in msg-prose container: %s", got)
+	}
+}
+
+func TestSanitizeTelegramHTML_keepsTheoryTable(t *testing.T) {
+	in := `Intro<table class="theory-table borders-grid"><tr><th>Nom</th><td colspan="2">ես</td></tr></table>Outro`
+	out := sanitizeTelegramHTML(in)
+	if !strings.Contains(out, `<table class="theory-table borders-grid">`) || !strings.Contains(out, `colspan="2"`) {
+		t.Fatalf("table markup lost: %s", out)
+	}
+	if strings.Contains(out, "<script") {
+		t.Fatalf("unexpected script: %s", out)
+	}
+}
+
+func TestRenderTextWithCommands_splitsTableContainers(t *testing.T) {
+	in := `Before<table class="theory-table borders-grid"><tr><th>A</th></tr></table>After`
+	got := string(renderTextWithCommands(in, "tok", 1, "n"))
+	if strings.Count(got, `class="msg-prose"`) < 2 {
+		t.Fatalf("want prose containers around table: %s", got)
+	}
+	if !strings.Contains(got, `class="msg-table-scroll"`) || !strings.Contains(got, "<table") {
+		t.Fatalf("want scrollable HTML table container: %s", got)
+	}
+	if strings.Contains(got, "<img") || strings.Contains(got, "msg-media-scroll") {
+		t.Fatalf("must not render tables as photos: %s", got)
+	}
+}
+
+func TestSplitMessageContainers_trimsBlankLinesAroundTables(t *testing.T) {
+	in := "Before prose.\n\n\n<table class=\"theory-table\"><tr><th>A</th></tr></table>\n\n\nAfter prose."
+	got := splitMessageContainers(in, false)
+	if strings.Contains(got, "msg-prose\">\n") || strings.Contains(got, "\n</div><div class=\"msg-table") {
+		t.Fatalf("prose must not keep leading/trailing blank lines: %q", got)
+	}
+	if !strings.Contains(got, `class="msg-prose">Before prose.</div>`) {
+		t.Fatalf("before prose trimmed: %q", got)
+	}
+	if !strings.Contains(got, `class="msg-prose">After prose.</div>`) {
+		t.Fatalf("after prose trimmed: %q", got)
+	}
+	if !strings.Contains(got, `class="msg-table-scroll"`) {
+		t.Fatalf("table wrapper missing: %q", got)
+	}
 }
