@@ -554,16 +554,23 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 // `https://x/y` or paths inside messages.
 var commandRe = regexp.MustCompile(`/[a-zA-Z][a-zA-Z0-9_]*`)
 
+// tableLikeLineRE matches space-aligned column rows (Theory ASCII tables).
+var tableLikeLineRE = regexp.MustCompile(`\S+\s{2,}\S+`)
+
+// htmlTagRE strips tags when classifying table-like lines inside sanitized HTML.
+var htmlTagRE = regexp.MustCompile(`<[^>]*>`)
+
 // renderTextWithCommands renders bot/user text for the debug chat.
 // Telegram parse_mode=HTML bodies are sanitized to a safe subset; plain text
 // is escaped. /commands become HTMX clickable (plain path only — avoids
-// wrapping inside already-sanitized markup).
+// wrapping inside already-sanitized markup). Space-aligned table runs are
+// wrapped in .msg-hscroll so only those regions scroll horizontally.
 func renderTextWithCommands(text, token string, chatID int64, name string) template.HTML {
 	if text == "" {
 		return ""
 	}
 	if looksLikeTelegramHTML(text) {
-		return template.HTML(sanitizeTelegramHTML(text))
+		return template.HTML(wrapTableLikeRegions(sanitizeTelegramHTML(text), false))
 	}
 	escaped := template.HTMLEscapeString(text)
 
@@ -577,8 +584,56 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 			template.HTMLEscapeString(string(vals)), cmd,
 		)
 	})
-	out = strings.ReplaceAll(out, "\n", "<br>")
-	return template.HTML(out)
+	return template.HTML(wrapTableLikeRegions(out, true))
+}
+
+// wrapTableLikeRegions wraps ≥2 consecutive column-aligned lines in
+// <div class="msg-hscroll"><pre>…</pre></div>. Prose lines keep normal wrap
+// (newlines → <br> when brNewlines). alreadyHTML means lines may contain tags.
+func wrapTableLikeRegions(s string, brNewlines bool) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	var b strings.Builder
+	i := 0
+	for i < len(lines) {
+		if isTableLikeLine(lines[i]) {
+			j := i + 1
+			for j < len(lines) && isTableLikeLine(lines[j]) {
+				j++
+			}
+			if j-i >= 2 {
+				if b.Len() > 0 {
+					b.WriteString("<br>")
+				}
+				b.WriteString(`<div class="msg-hscroll"><pre>`)
+				b.WriteString(strings.Join(lines[i:j], "\n"))
+				b.WriteString(`</pre></div>`)
+				i = j
+				continue
+			}
+		}
+		if b.Len() > 0 {
+			if brNewlines || strings.HasSuffix(b.String(), "</div>") {
+				b.WriteString("<br>")
+			} else {
+				b.WriteByte('\n')
+			}
+		}
+		b.WriteString(lines[i])
+		i++
+	}
+	return b.String()
+}
+
+func isTableLikeLine(line string) bool {
+	plain := htmlTagRE.ReplaceAllString(line, "")
+	plain = strings.TrimSpace(plain)
+	if plain == "" {
+		return false
+	}
+	return tableLikeLineRE.MatchString(plain)
 }
 
 // renderTopicCreatedService mirrors Telegram's “The topic "X" was created”

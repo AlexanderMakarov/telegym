@@ -13,18 +13,21 @@
     header .meta { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #777; }
     header a { color: #2a7fff; text-decoration: none; font-size: 0.85rem; }
     #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-    /* Compact bubble chrome; whitespace only on .msg-text so template whitespace
+    /* Compact bubble chrome; pre-wrap only on .msg-text so template whitespace
        between text/kbd/ts does not inflate height (matches upstream PR #16).
-       Use pre + overflow-x so space-aligned Theory tables / wide rich lines
-       scroll horizontally like Telegram Desktop instead of wrapping columns. */
-    .msg { max-width: 75%; padding: 0.35rem 0.65rem; border-radius: 12px; line-height: 1.35; overflow-x: auto; }
-    .msg-text { white-space: pre; overflow-x: auto; max-width: 100%; }
+       Do not set overflow-x on .msg — CSS then forces overflow-y:auto and every
+       bubble grows a vertical scrollbar. Wide tables scroll inside .msg-hscroll. */
+    .msg { max-width: 75%; padding: 0.35rem 0.65rem; border-radius: 12px; word-wrap: break-word; line-height: 1.35; }
+    .msg-text { white-space: pre-wrap; }
+    .msg-hscroll { overflow-x: auto; overflow-y: hidden; max-width: 100%; margin: 0.2rem 0; }
+    .msg-hscroll pre { margin: 0; white-space: pre; font-family: inherit; font-size: inherit; line-height: inherit; }
     .msg.bot { background: #fff; align-self: flex-start; border-bottom-left-radius: 2px; }
     .msg.user { background: #2a7fff; color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
     .msg .ts { display: block; font-size: 0.7rem; color: #999; margin-top: 0.2rem; font-family: ui-monospace, monospace; }
     .msg.user .ts { color: rgba(255,255,255,0.7); }
-    /* Theory table PNGs: natural width inside the bubble’s horizontal scroller. */
-    .msg img { max-width: none; height: auto; display: block; border-radius: 4px; margin-top: 0.3rem; }
+    /* Theory table PNGs: natural width inside a dedicated horizontal scroller. */
+    .msg-media-scroll { overflow-x: auto; overflow-y: hidden; max-width: 100%; margin-top: 0.3rem; }
+    .msg-media-scroll img { max-width: none; height: auto; display: block; border-radius: 4px; }
     .kbd { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
     .kbd-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
     /* Default look (no InlineKeyboardButton.style field) -- neutral gray. */
