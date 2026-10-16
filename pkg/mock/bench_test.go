@@ -7,21 +7,26 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Hot-path benchmarks. Not run by `make test`; use e.g.
 //
 //	go test -run '^$' -bench . -benchmem ./pkg/mock
 
-func benchPOST(b *testing.B, h http.Handler, path, body string) {
+// benchPOST reports a failed request with Errorf and false, so it is safe
+// from RunParallel goroutines, where FailNow must not be called.
+func benchPOST(b *testing.B, h http.Handler, path, body string) bool {
 	b.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		b.Fatalf("POST %s status=%d body=%s", path, rec.Code, rec.Body.String())
+		b.Errorf("POST %s status=%d body=%s", path, rec.Code, rec.Body.String())
+		return false
 	}
+	return true
 }
 
 func BenchmarkSendMessage(b *testing.B) {
@@ -29,7 +34,9 @@ func BenchmarkSendMessage(b *testing.B) {
 	const body = `{"chat_id":42,"text":"Hello, /start","reply_markup":{"inline_keyboard":[[{"text":"Next","callback_data":"next"}]]}}`
 	b.ReportAllocs()
 	for b.Loop() {
-		benchPOST(b, h, "/bot741:bench/sendMessage", body)
+		if !benchPOST(b, h, "/bot741:bench/sendMessage", body) {
+			return
+		}
 	}
 }
 
@@ -38,7 +45,9 @@ func BenchmarkSendMessageParallel(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			benchPOST(b, h, "/bot741:bench/sendMessage", `{"chat_id":42,"text":"Hello"}`)
+			if !benchPOST(b, h, "/bot741:bench/sendMessage", `{"chat_id":42,"text":"Hello"}`) {
+				return
+			}
 		}
 	})
 }
@@ -57,8 +66,14 @@ func BenchmarkInjectUpdateToWebhook(b *testing.B) {
 	const payload = `{"token":"741:bench","chat_id":99,"user_id":99,"first_name":"Bench","text":"ping"}`
 	b.ReportAllocs()
 	for b.Loop() {
-		benchPOST(b, h, "/debug/inject/update", payload)
-		<-received
+		if !benchPOST(b, h, "/debug/inject/update", payload) {
+			return
+		}
+		select {
+		case <-received:
+		case <-time.After(5 * time.Second):
+			b.Fatal("webhook not delivered within 5s")
+		}
 	}
 }
 
@@ -67,8 +82,10 @@ func BenchmarkInjectUpdateToWebhook(b *testing.B) {
 func BenchmarkDebugChatMessages(b *testing.B) {
 	h := New(Config{Quiet: true}).Handler()
 	for i := range 200 {
-		benchPOST(b, h, "/bot741:bench/sendMessage",
-			fmt.Sprintf(`{"chat_id":42,"text":"Message %d with /cmd%d","reply_markup":{"inline_keyboard":[[{"text":"A","callback_data":"a"},{"text":"B","callback_data":"b"}]]}}`, i, i))
+		if !benchPOST(b, h, "/bot741:bench/sendMessage",
+			fmt.Sprintf(`{"chat_id":42,"text":"Message %d with /cmd%d","reply_markup":{"inline_keyboard":[[{"text":"A","callback_data":"a"},{"text":"B","callback_data":"b"}]]}}`, i, i)) {
+			return
+		}
 	}
 	b.ReportAllocs()
 	for b.Loop() {
