@@ -35,14 +35,15 @@ type Chat struct {
 }
 
 type Message struct {
-	MessageID   int          `json:"message_id"`
-	From        *User        `json:"from,omitempty"`
-	Date        int64        `json:"date"`
-	Chat        Chat         `json:"chat"`
-	Text        string       `json:"text,omitempty"`
-	Caption     string       `json:"caption,omitempty"`
-	Entities    []Entity     `json:"entities,omitempty"`
-	ReplyMarkup *ReplyMarkup `json:"reply_markup,omitempty"`
+	MessageID       int          `json:"message_id"`
+	From            *User        `json:"from,omitempty"`
+	Date            int64        `json:"date"`
+	Chat            Chat         `json:"chat"`
+	Text            string       `json:"text,omitempty"`
+	Caption         string       `json:"caption,omitempty"`
+	Entities        []Entity     `json:"entities,omitempty"`
+	CaptionEntities []Entity     `json:"caption_entities,omitempty"`
+	ReplyMarkup     *ReplyMarkup `json:"reply_markup,omitempty"`
 
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Video     *Video      `json:"video,omitempty"`
