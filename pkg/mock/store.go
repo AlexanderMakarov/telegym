@@ -57,7 +57,7 @@ type botEntry struct {
 	// Chat action from sendChatAction ("typing", "upload_photo", ...) per
 	// chat and forum topic. Cleared by the next new message in that topic
 	// or after typingTTL.
-	typingMu sync.Mutex
+	typingMu sync.RWMutex
 	typing   map[typingKey]chatTyping
 	// Forum topics created via createForumTopic, per chat in creation order.
 	topicsMu sync.Mutex
@@ -458,6 +458,14 @@ func (b *botEntry) SetTyping(chatID int64, thread int, action string) {
 // until the typingMinVisible window has passed.
 func (b *botEntry) ClearTyping(chatID int64, thread int) {
 	key := typingKey{chatID, thread}
+	// Every send calls this; skip the write lock when nothing is typing so
+	// concurrent sends do not serialize here.
+	b.typingMu.RLock()
+	_, ok := b.typing[key]
+	b.typingMu.RUnlock()
+	if !ok {
+		return
+	}
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()
 	t, ok := b.typing[key]
