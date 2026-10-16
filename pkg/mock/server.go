@@ -214,6 +214,7 @@ func parseBotPath(p string) (token, method string, ok bool) {
 func (s *Server) registerBotAPI(g *gin.RouterGroup) {
 	// Methods that return Message (or Update side-effect)
 	g.POST("/sendMessage", s.withBot(s.handlers.SendMessage))
+	g.POST("/sendRichMessage", s.withBot(s.handlers.SendRichMessage))
 	g.POST("/sendPhoto", s.withBot(s.handlers.SendPhoto))
 	g.POST("/sendVideo", s.withBot(s.handlers.SendVideo))
 	g.POST("/sendAnimation", s.withBot(s.handlers.SendAnimation))

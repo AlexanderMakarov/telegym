@@ -40,6 +40,7 @@ type telegramHTMLRenderer struct {
 	token  string
 	chatID int64
 	name   string
+	rich   bool // sendRichMessage html: block tags allowed, newlines are whitespace
 }
 
 // telegramHTMLTags maps each supported tag to the tag the debug chat emits.
@@ -51,6 +52,12 @@ var telegramHTMLTags = map[atom.Atom]string{
 	atom.Code: "code", atom.Pre: "pre",
 }
 
+func (r *telegramHTMLRenderer) renderChildren(n *nethtml.Node, ctx htmlContext) {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		r.render(c, ctx)
+	}
+}
+
 func (r *telegramHTMLRenderer) render(n *nethtml.Node, ctx htmlContext) {
 	switch n.Type {
 	case nethtml.TextNode:
@@ -58,7 +65,7 @@ func (r *telegramHTMLRenderer) render(n *nethtml.Node, ctx htmlContext) {
 		if !ctx.literal {
 			text = linkifyCommands(text, r.token, r.chatID, r.name)
 		}
-		if !ctx.pre {
+		if !ctx.pre && !r.rich {
 			text = strings.ReplaceAll(text, "\n", "<br>")
 		}
 		r.b.WriteString(text)
@@ -66,6 +73,9 @@ func (r *telegramHTMLRenderer) render(n *nethtml.Node, ctx htmlContext) {
 	case nethtml.ElementNode:
 	default:
 		return // comments, doctypes
+	}
+	if r.rich && r.renderRichElement(n, ctx) {
+		return
 	}
 
 	open, closeTag := "", ""
@@ -96,9 +106,7 @@ func (r *telegramHTMLRenderer) render(n *nethtml.Node, ctx htmlContext) {
 	// Unsupported tags (and tg-emoji / tg-time, which only decorate their
 	// text) render their children only.
 	r.b.WriteString(open)
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		r.render(c, ctx)
-	}
+	r.renderChildren(n, ctx)
 	r.b.WriteString(closeTag)
 }
 

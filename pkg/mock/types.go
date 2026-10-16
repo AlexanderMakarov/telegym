@@ -55,6 +55,8 @@ type Message struct {
 	Sticker   *Sticker    `json:"sticker,omitempty"`
 	Dice      *Dice       `json:"dice,omitempty"`
 
+	RichMessage *RichMessage `json:"rich_message,omitempty"`
+
 	// EventSeq is a mock-internal monotonic counter, incremented on every
 	// AppendMessage. Two entries with the same MessageID (a bot send
 	// followed by an edit of that message) get DIFFERENT EventSeq values,
