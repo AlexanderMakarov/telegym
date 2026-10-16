@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,11 +30,24 @@ func benchPOST(b *testing.B, h http.Handler, path, body string) bool {
 	return true
 }
 
+// benchClearEvery keeps the stored history below defaultMaxMessages, so the
+// sendMessage benchmarks do not depend on -benchtime by measuring the
+// trim of a full buffer.
+const benchClearEvery = 4096
+
 func BenchmarkSendMessage(b *testing.B) {
-	h := New(Config{Quiet: true}).Handler()
+	srv := New(Config{Quiet: true})
+	h := srv.Handler()
+	bot := srv.handlers.Store.Bot("741:bench")
 	const body = `{"chat_id":42,"text":"Hello, /start","reply_markup":{"inline_keyboard":[[{"text":"Next","callback_data":"next"}]]}}`
 	b.ReportAllocs()
+	n := 0
 	for b.Loop() {
+		if n++; n%benchClearEvery == 0 {
+			b.StopTimer()
+			bot.ClearMessages()
+			b.StartTimer()
+		}
 		if !benchPOST(b, h, "/bot741:bench/sendMessage", body) {
 			return
 		}
@@ -41,10 +55,16 @@ func BenchmarkSendMessage(b *testing.B) {
 }
 
 func BenchmarkSendMessageParallel(b *testing.B) {
-	h := New(Config{Quiet: true}).Handler()
+	srv := New(Config{Quiet: true})
+	h := srv.Handler()
+	bot := srv.handlers.Store.Bot("741:bench")
+	var sent atomic.Int64
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
+			if sent.Add(1)%benchClearEvery == 0 {
+				bot.ClearMessages()
+			}
 			if !benchPOST(b, h, "/bot741:bench/sendMessage", `{"chat_id":42,"text":"Hello"}`) {
 				return
 			}
