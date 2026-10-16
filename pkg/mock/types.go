@@ -45,6 +45,10 @@ type Message struct {
 	CaptionEntities []Entity     `json:"caption_entities,omitempty"`
 	ReplyMarkup     *ReplyMarkup `json:"reply_markup,omitempty"`
 
+	// ParseMode is the parse_mode the bot sent with text or caption. Mock
+	// internal: real Telegram returns parsed entities instead.
+	ParseMode string `json:"-"`
+
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Video     *Video      `json:"video,omitempty"`
 	Animation *Animation  `json:"animation,omitempty"`

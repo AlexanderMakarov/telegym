@@ -168,6 +168,7 @@ func (h *Handlers) SendMessage(c *gin.Context, bot *botEntry) {
 	m := h.newBotMessage(bot, chatID)
 	m.Text = toString(body["text"])
 	m.Entities = parseEntities(body["entities"])
+	m.ParseMode = toString(body["parse_mode"])
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
 
 	bot.AppendMessage(m)
@@ -189,6 +190,7 @@ func (h *Handlers) EditMessageText(c *gin.Context, bot *botEntry) {
 		Text:        toString(body["text"]),
 		Entities:    parseEntities(body["entities"]),
 		ReplyMarkup: parseReplyMarkup(body["reply_markup"]),
+		ParseMode:   toString(body["parse_mode"]),
 	}
 	bot.AppendMessage(m)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
@@ -232,6 +234,7 @@ func (h *Handlers) EditMessageCaption(c *gin.Context, bot *botEntry) {
 		Caption:         toString(body["caption"]),
 		CaptionEntities: parseEntities(body["caption_entities"]),
 		ReplyMarkup:     parseReplyMarkup(body["reply_markup"]),
+		ParseMode:       toString(body["parse_mode"]),
 	}
 	bot.AppendMessage(m)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
@@ -294,6 +297,7 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	m.Caption = toString(body["caption"])
 	m.Text = m.Caption
 	m.Entities = parseEntities(body["caption_entities"])
+	m.ParseMode = toString(body["parse_mode"])
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
 
 	// If this was a multipart upload, capture the actual bytes into the
