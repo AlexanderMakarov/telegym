@@ -437,9 +437,10 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 }
 
 // commandRe matches Telegram-style bot commands: /word possibly followed by
-// alphanumerics and underscores. Conservative so it doesn't grab URLs like
-// `https://x/y` or paths inside messages.
-var commandRe = regexp.MustCompile(`/[a-zA-Z][a-zA-Z0-9_]*`)
+// alphanumerics and underscores, at the start of the text or after
+// whitespace - like Telegram, so "yes/no", `https://x/y` and an escaped
+// "&lt;/b&gt;" are not commands. Group 1 is the preceding character.
+var commandRe = regexp.MustCompile(`(^|\s)(/[a-zA-Z][a-zA-Z0-9_]*)`)
 
 // renderTextWithCommands HTML-escapes text, then wraps every /command match
 // in an HTMX-driven clickable element that POSTs to /send via the same
@@ -460,11 +461,13 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 // linkifyCommands wraps every /command in already-escaped text in a
 // clickable element that sends it through the compose form path.
 func linkifyCommands(escaped, token string, chatID int64, name string) string {
-	return commandRe.ReplaceAllStringFunc(escaped, func(cmd string) string {
+	return commandRe.ReplaceAllStringFunc(escaped, func(match string) string {
+		sub := commandRe.FindStringSubmatch(match)
+		prefix, cmd := sub[1], sub[2]
 		// cmd is matched against already-escaped text; it can only contain
 		// safe characters (/[A-Za-z0-9_]+) so no further escaping needed.
 		vals, _ := json.Marshal(map[string]string{"text": cmd, "name": name})
-		return fmt.Sprintf(
+		return prefix + fmt.Sprintf(
 			`<a class="cmd" hx-post="/debug/chat/%s/%d/send" hx-vals="%s" hx-swap="none">%s</a>`,
 			template.HTMLEscapeString(token), chatID,
 			template.HTMLEscapeString(string(vals)), cmd,
