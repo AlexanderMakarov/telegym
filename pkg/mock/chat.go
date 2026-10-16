@@ -472,9 +472,12 @@ func linkifyCommands(escaped, token string, chatID int64, name string) string {
 	})
 }
 
-// renderMessageText renders a bot message body: Telegram HTML when the bot
-// sent parse_mode=HTML, plain text otherwise.
+// renderMessageText renders a bot message body: a sendRichMessage body,
+// Telegram HTML when the bot sent parse_mode=HTML, plain text otherwise.
 func renderMessageText(m Message, token string, chatID int64, name string) template.HTML {
+	if m.RichMessage != nil {
+		return renderRichMessage(m.RichMessage, token, chatID, name)
+	}
 	text := pickText(m)
 	if text != "" && strings.EqualFold(m.ParseMode, "HTML") {
 		return renderTelegramHTML(text, token, chatID, name)

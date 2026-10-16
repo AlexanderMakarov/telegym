@@ -29,6 +29,32 @@
     .msg blockquote.expandable:hover { max-height: none; }
     .tg-spoiler { background: #999; color: transparent; border-radius: 3px; cursor: pointer; }
     .tg-spoiler:hover { background: none; color: inherit; }
+    /* sendRichMessage bodies. Only tables scroll sideways: overflow-x on the
+       bubble itself would also force a vertical scrollbar. */
+    .rich h1, .rich h2, .rich h3, .rich h4, .rich h5, .rich h6 { margin: 0.4rem 0 0.2rem; line-height: 1.25; }
+    .rich h1 { font-size: 1.3rem; } .rich h2 { font-size: 1.2rem; } .rich h3 { font-size: 1.1rem; }
+    .rich h4, .rich h5, .rich h6 { font-size: 1rem; }
+    .rich p { margin: 0.25rem 0; }
+    .rich ul, .rich ol { margin: 0.25rem 0; padding-left: 1.3rem; }
+    .rich ul.rich-list { list-style: none; padding-left: 0.3rem; }
+    .rich li > p { margin: 0; display: inline; }
+    .rich hr { border: none; border-top: 1px solid #ddd; margin: 0.4rem 0; }
+    .rich footer, .rich cite, .rich figcaption { color: #777; font-size: 0.85em; }
+    .rich cite { display: block; font-style: normal; }
+    .rich aside { text-align: center; font-style: italic; margin: 0.4rem 0; }
+    .rich figure { margin: 0.3rem 0; }
+    .rich details { margin: 0.3rem 0; }
+    .rich summary { cursor: pointer; font-weight: 600; }
+    .rich-table-wrap { overflow-x: auto; overflow-y: hidden; max-width: 100%; margin: 0.3rem 0; }
+    .rich-table { border-collapse: collapse; font-size: 0.9rem; }
+    .rich-table caption { caption-side: top; text-align: left; color: #777; font-size: 0.85em; padding-bottom: 0.2rem; }
+    .rich-table th, .rich-table td { padding: 0.3rem 0.55rem; vertical-align: top; text-align: left; }
+    .rich-table th { background: rgba(0,0,0,0.06); font-weight: 600; }
+    .rich-table.bordered th, .rich-table.bordered td { border: 1px solid #c8c8cc; }
+    .rich-table.striped tr:nth-child(even) td { background: rgba(0,0,0,0.03); }
+    .rich-table.compact th, .rich-table.compact td { padding: 0.15rem 0.35rem; font-size: 0.85em; }
+    .rich-button { display: inline-block; padding: 0.15rem 0.6rem; border: 1px solid #c8c8cc; border-radius: 6px; background: #f2f2f5; font-size: 0.85rem; }
+    .rich-button-row { display: flex; gap: 0.3rem; margin: 0.3rem 0; }
     .msg img { max-width: 100%; border-radius: 4px; margin-top: 0.3rem; }
     .kbd { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
     .kbd-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
