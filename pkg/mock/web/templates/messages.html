@@ -53,6 +53,8 @@
       <div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>
     {{else if .StickerFileID}}
       <span class="sticker-id" title="bot sent a sticker by cached file_id; no emoji metadata available in mock">🎴 {{.StickerFileID}}</span>
+    {{else if .PhotoURL}}
+      <a href="{{.PhotoURL}}" target="_blank" rel="noopener"><img class="msg-photo" src="{{.PhotoURL}}" alt="photo"></a>
     {{else if .MediaTag}}
       <span class="media-tag">{{.MediaTag}}</span>
     {{end}}

@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -171,6 +172,7 @@ type msgVM struct {
 	MediaTag      string
 	StickerEmoji  string // empty if bot did not supply an emoji
 	StickerFileID string // short prefix shown when emoji is missing (debugging aid)
+	PhotoURL      string // /debug/files/<id> when the photo's bytes were uploaded to the mock
 }
 
 type btnVM struct {
@@ -208,6 +210,7 @@ func (h *chatHandlers) messages(c *gin.Context) {
 
 	botMsgs := bot.Messages(chatID, 200)
 	items := mergeChatLog(botMsgs, bot.Inputs(chatID), token, chatID, name)
+	h.attachPhotoURLs(items, botMsgs)
 	emptyHint := renderTextWithCommands(
 		"empty chat - start with /start (or any /command in text)",
 		token, chatID, name,
@@ -232,6 +235,40 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		Placeholder:   placeholder,
 		Toast:         toast,
 	})
+}
+
+// attachPhotoURLs shows sendPhoto images whose bytes the mock captured from
+// a multipart upload. Photos sent by file_id or URL keep the "photo" tag.
+func (h *chatHandlers) attachPhotoURLs(items []msgVM, botMsgs []Message) {
+	urls := map[int]string{}
+	for _, m := range botMsgs {
+		if len(m.Photo) == 0 {
+			continue
+		}
+		if _, seen := urls[m.MessageID]; seen {
+			continue // older revision of an edited message
+		}
+		id := m.Photo[len(m.Photo)-1].FileID
+		if f, ok := h.store.Files.Get(id); ok && isImage(f) {
+			urls[m.MessageID] = "/debug/files/" + url.PathEscape(id)
+		} else {
+			urls[m.MessageID] = ""
+		}
+	}
+	for i := range items {
+		if items[i].Side == "bot" {
+			items[i].PhotoURL = urls[items[i].MessageID]
+		}
+	}
+}
+
+// isImage trusts an image/* part type and otherwise sniffs the bytes:
+// clients often upload photos as application/octet-stream.
+func isImage(f *storedFile) bool {
+	if strings.HasPrefix(f.ContentType, "image/") {
+		return true
+	}
+	return strings.HasPrefix(http.DetectContentType(f.Bytes), "image/")
 }
 
 // currentReplyKeyboard derives the chat-input keyboard from message
