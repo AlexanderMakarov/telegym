@@ -246,6 +246,26 @@ func (b *botEntry) AppendMessage(m Message) {
 	}
 }
 
+// DeleteMessage removes every stored entry for chatID+messageID, including
+// earlier edit revisions, so the bubble disappears from /debug/chat.
+// Returns false when nothing matched (e.g. a user message or an entry
+// already evicted from the ring buffer).
+func (b *botEntry) DeleteMessage(chatID int64, messageID int) bool {
+	b.msgMu.Lock()
+	defer b.msgMu.Unlock()
+	kept := b.messages[:0]
+	for _, m := range b.messages {
+		if m.Chat.ID == chatID && m.MessageID == messageID {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	removed := len(kept) != len(b.messages)
+	clear(b.messages[len(kept):])
+	b.messages = kept
+	return removed
+}
+
 // Messages returns up to `limit` most-recent messages for chatID. If chatID
 // is zero, returns messages across all chats.
 func (b *botEntry) Messages(chatID int64, limit int) []Message {

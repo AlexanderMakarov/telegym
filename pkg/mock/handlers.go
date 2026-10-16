@@ -256,7 +256,22 @@ func (h *Handlers) EditMessageMedia(c *gin.Context, bot *botEntry) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
 }
 
-func (h *Handlers) DeleteMessage(c *gin.Context, _ *botEntry) {
+// DeleteMessage drops the message from the store so the debug chat stops
+// rendering it. The store only holds the bot's outbound messages, so a miss
+// (deleting a user's message, or one already evicted) still returns true.
+func (h *Handlers) DeleteMessage(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	msgID := toInt(body["message_id"])
+	if chatID == 0 || msgID == 0 {
+		errResp(c, http.StatusBadRequest, "Bad Request: chat_id and message_id are required")
+		return
+	}
+	bot.DeleteMessage(chatID, msgID)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
