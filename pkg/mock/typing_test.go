@@ -93,3 +93,25 @@ func TestChatActionExpiresAfterTTL(t *testing.T) {
 		t.Fatal("chat action must expire after typingTTL")
 	}
 }
+
+func TestChatActionSurvivesEdits(t *testing.T) {
+	const token = "741:typing"
+	srv := New(Config{Quiet: true})
+	bot := srv.Store().Bot(token)
+	doTypingTestPOST(t, srv, "/bot"+token+"/sendChatAction", `{"chat_id":7,"action":"typing"}`)
+	// Age the action past the min-visible window so a clear would drop it.
+	bot.typingMu.Lock()
+	ty := bot.typing[7]
+	ty.since = ty.since.Add(-2 * typingMinVisible)
+	bot.typing[7] = ty
+	bot.typingMu.Unlock()
+
+	doTypingTestPOST(t, srv, "/bot"+token+"/editMessageText", `{"chat_id":7,"message_id":1,"text":"streamed"}`)
+	if _, ok := bot.ActiveTyping(7); !ok {
+		t.Fatal("an edit must not end the chat action")
+	}
+	doTypingTestPOST(t, srv, "/bot"+token+"/sendMessage", `{"chat_id":7,"text":"done"}`)
+	if _, ok := bot.ActiveTyping(7); ok {
+		t.Fatal("a new message must end the chat action")
+	}
+}

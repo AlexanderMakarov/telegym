@@ -132,7 +132,11 @@ func parseEntities(v any) []Entity {
 }
 
 // newBotMessage builds a baseline Message authored by the given bot at "now".
+// Every send* handler calls it once its request is valid, so it also ends
+// the chat's sendChatAction status: in Telegram a new message does that,
+// an edit does not.
 func (h *Handlers) newBotMessage(bot *botEntry, chatID int64) Message {
+	bot.ClearTyping(chatID)
 	return Message{
 		MessageID: h.Store.NextMessageID(),
 		From:      &bot.identity,
