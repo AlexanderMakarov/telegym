@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -135,11 +136,12 @@ func (h *chatHandlers) open(c *gin.Context) {
 }
 
 type chatVM struct {
-	Token      string
-	TokenShort string
-	ChatID     int64
-	Name       string
-	WebhookSet bool
+	Token       string
+	TokenShort  string
+	ChatID      int64
+	Name        string
+	WebhookSet  bool
+	MessagesURL string // poll URL; carries name and the topic filter
 }
 
 func (h *chatHandlers) view(c *gin.Context) {
@@ -159,6 +161,11 @@ func (h *chatHandlers) view(c *gin.Context) {
 		Name:       c.DefaultQuery("name", "andrii"),
 		WebhookSet: webhookURL != "",
 	}
+	q := url.Values{"name": {vm.Name}}
+	if thread := c.Query("thread"); thread != "" {
+		q.Set("thread", thread)
+	}
+	vm.MessagesURL = fmt.Sprintf("/debug/chat/%s/%d/messages?%s", url.PathEscape(token), chatID, q.Encode())
 	render(c, "chat.html", vm)
 }
 
@@ -171,6 +178,9 @@ type msgVM struct {
 	MediaTag      string
 	StickerEmoji  string // empty if bot did not supply an emoji
 	StickerFileID string // short prefix shown when emoji is missing (debugging aid)
+	TopicLabel    string // topic name shown in the "All" view of a chat with topics
+	TopicCreated  string // non-empty for a forum_topic_created service row
+	TopicHref     string // chat page filtered to the created topic
 }
 
 type btnVM struct {
@@ -189,6 +199,13 @@ type messagesVM struct {
 	ReplyKeyboard [][]string    // current reply keyboard rows (button texts); nil if cleared
 	Placeholder   string        // input_field_placeholder from latest reply keyboard
 	Toast         *toastVM      // pending callback toast for this chat, drained on read
+	TopicTabs     []topicTabVM  // All / General / one per forum topic; empty without topics
+}
+
+type topicTabVM struct {
+	Label  string
+	Href   string
+	Active bool
 }
 
 type toastVM struct {
@@ -207,12 +224,33 @@ func (h *chatHandlers) messages(c *gin.Context) {
 	bot := h.store.Bot(token)
 
 	botMsgs := bot.Messages(chatID, 200)
-	items := mergeChatLog(botMsgs, bot.Inputs(chatID), token, chatID, name)
+	inheritMessageThreads(botMsgs)
+	kbMsgs := botMsgs
+	userInputs := bot.Inputs(chatID)
+
+	// Optional topic filter: thread=0 is the General topic, thread=N a
+	// forum topic. User inputs from the composer always go to General.
+	topics := bot.ForumTopics(chatID)
+	var topicNames map[int]string
+	activeTab := ""
+	if thread, err := strconv.Atoi(c.Query("thread")); err == nil {
+		activeTab = strconv.Itoa(thread)
+		botMsgs = messagesInThread(botMsgs, thread)
+		if thread != 0 {
+			userInputs = nil
+		}
+	} else if len(topics) > 0 {
+		topicNames = map[int]string{0: "General"}
+		for _, t := range topics {
+			topicNames[t.MessageThreadID] = t.Name
+		}
+	}
+	items := mergeChatLog(botMsgs, userInputs, token, chatID, name, topicNames)
 	emptyHint := renderTextWithCommands(
 		"empty chat - start with /start (or any /command in text)",
 		token, chatID, name,
 	)
-	kbRows, placeholder := currentReplyKeyboard(botMsgs)
+	kbRows, placeholder := currentReplyKeyboard(kbMsgs)
 
 	// Drain at most one pending callback toast per poll. The OOB <div id="toast">
 	// only swaps when a fresh toast is present, otherwise the existing in-flight
@@ -231,7 +269,65 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		ReplyKeyboard: kbRows,
 		Placeholder:   placeholder,
 		Toast:         toast,
+		TopicTabs:     buildTopicTabs(token, chatID, name, activeTab, topics),
 	})
+}
+
+// inheritMessageThreads copies message_thread_id onto edit entries: edit
+// requests carry no thread, but the edited message stays in its topic.
+func inheritMessageThreads(msgs []Message) {
+	threads := map[int]int{}
+	for _, m := range msgs {
+		if m.MessageThreadID != 0 {
+			threads[m.MessageID] = m.MessageThreadID
+		}
+	}
+	for i := range msgs {
+		if msgs[i].MessageThreadID == 0 {
+			msgs[i].MessageThreadID = threads[msgs[i].MessageID]
+		}
+	}
+}
+
+func messagesInThread(msgs []Message, thread int) []Message {
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.MessageThreadID == thread {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// chatPageURL links to the chat page, optionally filtered to a topic
+// (thread "" = all messages, "0" = General).
+func chatPageURL(token string, chatID int64, name, thread string) string {
+	q := url.Values{"name": {name}}
+	if thread != "" {
+		q.Set("thread", thread)
+	}
+	return fmt.Sprintf("/debug/chat/%s/%d?%s", url.PathEscape(token), chatID, q.Encode())
+}
+
+// buildTopicTabs returns no tabs for chats without forum topics, so the
+// debug chat of a bot that never calls createForumTopic is unchanged.
+func buildTopicTabs(token string, chatID int64, name, active string, topics []ForumTopic) []topicTabVM {
+	if len(topics) == 0 {
+		return nil
+	}
+	tabs := []topicTabVM{
+		{Label: "All", Href: chatPageURL(token, chatID, name, ""), Active: active == ""},
+		{Label: "General", Href: chatPageURL(token, chatID, name, "0"), Active: active == "0"},
+	}
+	for _, t := range topics {
+		id := strconv.Itoa(t.MessageThreadID)
+		tabs = append(tabs, topicTabVM{
+			Label:  t.Name,
+			Href:   chatPageURL(token, chatID, name, id),
+			Active: active == id,
+		})
+	}
+	return tabs
 }
 
 // currentReplyKeyboard derives the chat-input keyboard from message
@@ -358,7 +454,10 @@ func (h *chatHandlers) click(c *gin.Context) {
 // we collapse them to a single visual entry per (chat_id, message_id) --
 // the LATEST one in chronological order wins, matching how a real
 // Telegram client replaces the bubble in place when a message is edited.
-func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatID int64, name string) []msgVM {
+//
+// topicNames (thread id -> name) is set for the unfiltered view of a chat
+// with forum topics; each bot message is then tagged with its topic.
+func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatID int64, name string, topicNames map[int]string) []msgVM {
 	type entry struct {
 		seq int
 		vm  msgVM
@@ -382,6 +481,13 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 			MessageID: m.MessageID,
 			Stamp:     time.Unix(m.Date, 0).Format("15:04:05"),
 			MediaTag:  mediaTag(m),
+		}
+		if m.ForumTopicCreated != nil {
+			v.Text = ""
+			v.TopicCreated = m.ForumTopicCreated.Name
+			v.TopicHref = chatPageURL(token, chatID, name, strconv.Itoa(m.MessageThreadID))
+		} else if topicNames != nil {
+			v.TopicLabel = topicNames[m.MessageThreadID]
 		}
 		if m.Sticker != nil {
 			// Only show emoji if the bot actually supplied one. Otherwise
