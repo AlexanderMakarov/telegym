@@ -181,6 +181,7 @@ type msgVM struct {
 	TopicLabel    string // topic name shown in the "All" view of a chat with topics
 	TopicCreated  string // non-empty for a forum_topic_created service row
 	TopicHref     string // chat page filtered to the created topic
+	PhotoURL      string // /debug/files/<id> when the photo's bytes were uploaded to the mock
 }
 
 type btnVM struct {
@@ -252,6 +253,7 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		}
 	}
 	items := mergeChatLog(botMsgs, userInputs, token, chatID, name, topicNames)
+	h.attachPhotoURLs(items, botMsgs)
 	emptyHint := renderTextWithCommands(
 		"empty chat - start with /start (or any /command in text)",
 		token, chatID, name,
@@ -305,6 +307,31 @@ func inheritMessageThreads(msgs []Message) {
 	}
 }
 
+// attachPhotoURLs shows sendPhoto images whose bytes the mock captured from
+// a multipart upload. Photos sent by file_id or URL keep the "photo" tag.
+func (h *chatHandlers) attachPhotoURLs(items []msgVM, botMsgs []Message) {
+	urls := map[int]string{}
+	for _, m := range botMsgs {
+		if len(m.Photo) == 0 {
+			continue
+		}
+		if _, seen := urls[m.MessageID]; seen {
+			continue // older revision of an edited message
+		}
+		id := m.Photo[len(m.Photo)-1].FileID
+		if f, ok := h.store.Files.Get(id); ok && isImage(f) {
+			urls[m.MessageID] = "/debug/files/" + url.PathEscape(id)
+		} else {
+			urls[m.MessageID] = ""
+		}
+	}
+	for i := range items {
+		if items[i].Side == "bot" {
+			items[i].PhotoURL = urls[items[i].MessageID]
+		}
+	}
+}
+
 func messagesInThread(msgs []Message, thread int) []Message {
 	out := make([]Message, 0, len(msgs))
 	for _, m := range msgs {
@@ -344,6 +371,14 @@ func buildTopicTabs(token string, chatID int64, name, active string, topics []Fo
 		})
 	}
 	return tabs
+}
+
+// isImage sniffs the bytes instead of trusting the part Content-Type:
+// clients often upload photos as application/octet-stream, and a declared
+// image/svg+xml part would be served inline with its scripts. Sniffing
+// never reports SVG as an image.
+func isImage(f *storedFile) bool {
+	return strings.HasPrefix(http.DetectContentType(f.Bytes), "image/")
 }
 
 // currentReplyKeyboard derives the chat-input keyboard from message
