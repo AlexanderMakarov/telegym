@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -168,6 +169,7 @@ func (h *Handlers) SendMessage(c *gin.Context, bot *botEntry) {
 	m := h.newBotMessage(bot, chatID)
 	m.Text = toString(body["text"])
 	m.Entities = parseEntities(body["entities"])
+	setMessageThread(&m, body)
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
 
 	bot.AppendMessage(m)
@@ -308,6 +310,7 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	m := h.newBotMessage(bot, chatID)
 	m.Caption = toString(body["caption"])
 	m.Text = m.Caption
+	setMessageThread(&m, body)
 	m.Entities = parseEntities(body["caption_entities"])
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
 
@@ -501,4 +504,49 @@ func (h *Handlers) SendChatAction(c *gin.Context, bot *botEntry) {
 	}
 	bot.SetTyping(chatID, action)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
+}
+
+// setMessageThread copies message_thread_id from a send* request, marking
+// the message as sent to a forum topic.
+func setMessageThread(m *Message, body map[string]any) {
+	if tid := toInt(body["message_thread_id"]); tid != 0 {
+		m.MessageThreadID = tid
+		m.IsTopicMessage = true
+	}
+}
+
+// forumTopicIconColors are the icon_color values createForumTopic accepts.
+var forumTopicIconColors = map[int]bool{
+	0x6FB9F0: true, 0xFFD67E: true, 0xCB86DB: true,
+	0x8EEE98: true, 0xFF93B2: true, 0xFB6F5F: true,
+}
+
+// CreateForumTopic opens a topic and posts its forum_topic_created service
+// message, so the debug chat can show and filter by topic.
+func (h *Handlers) CreateForumTopic(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	if chatID == 0 {
+		errResp(c, http.StatusBadRequest, "Bad Request: chat_id is required")
+		return
+	}
+	name := toString(body["name"])
+	if n := utf8.RuneCountInString(name); n == 0 || n > 128 {
+		errResp(c, http.StatusBadRequest, "Bad Request: invalid forum topic name specified")
+		return
+	}
+	iconColor := 0x6FB9F0
+	if _, ok := body["icon_color"]; ok {
+		iconColor = toInt(body["icon_color"])
+		if !forumTopicIconColors[iconColor] {
+			errResp(c, http.StatusBadRequest, "Bad Request: invalid icon_color specified")
+			return
+		}
+	}
+	topic := bot.CreateForumTopic(chatID, name, iconColor, toString(body["icon_custom_emoji_id"]))
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: topic})
 }

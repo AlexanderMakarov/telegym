@@ -58,6 +58,9 @@ type botEntry struct {
 	// ...). Cleared by the next outbound message or after typingTTL.
 	typingMu sync.Mutex
 	typing   map[int64]chatTyping
+	// Forum topics created via createForumTopic, per chat in creation order.
+	topicsMu sync.Mutex
+	topics   map[int64][]ForumTopic
 
 	maxMessages int
 	maxInputs   int
@@ -235,10 +238,18 @@ func (b *botEntry) Webhook() (url, secret string) {
 // the bot edits message X and we store the new state as a separate
 // entry with the same MessageID but a higher EventSeq).
 func (b *botEntry) AppendMessage(m Message) {
+	b.ClearTyping(m.Chat.ID)
+	b.storeMessage(m)
+
+	if b.parent != nil && b.parent.Proxy != nil {
+		b.parent.Proxy.Dispatch(b.token, m)
+	}
+}
+
+func (b *botEntry) storeMessage(m Message) {
 	if b.parent != nil {
 		m.EventSeq = int64(b.parent.NextMessageID())
 	}
-	b.ClearTyping(m.Chat.ID)
 	b.msgMu.Lock()
 	b.messages = append(b.messages, m)
 	if over := len(b.messages) - b.maxMessages; over > 0 {
@@ -246,10 +257,46 @@ func (b *botEntry) AppendMessage(m Message) {
 		b.messages = b.messages[:b.maxMessages]
 	}
 	b.msgMu.Unlock()
+}
 
-	if b.parent != nil && b.parent.Proxy != nil {
-		b.parent.Proxy.Dispatch(b.token, m)
+// CreateForumTopic opens a new topic in chatID. Like Telegram, every call
+// creates a new topic (names need not be unique) and the topic's
+// message_thread_id is the message_id of its forum_topic_created service
+// message, which is stored in the topic thread. The service message is
+// not relayed to the proxy - real Telegram creates it itself.
+func (b *botEntry) CreateForumTopic(chatID int64, name string, iconColor int, iconEmojiID string) ForumTopic {
+	threadID := 1
+	if b.parent != nil {
+		threadID = b.parent.NextMessageID()
 	}
+	topic := ForumTopic{MessageThreadID: threadID, Name: name, IconColor: iconColor, IconCustomEmojiID: iconEmojiID}
+
+	b.topicsMu.Lock()
+	if b.topics == nil {
+		b.topics = map[int64][]ForumTopic{}
+	}
+	b.topics[chatID] = append(b.topics[chatID], topic)
+	b.topicsMu.Unlock()
+
+	b.storeMessage(Message{
+		MessageID:       threadID,
+		From:            &b.identity,
+		Date:            time.Now().Unix(),
+		Chat:            Chat{ID: chatID, Type: "private"},
+		MessageThreadID: threadID,
+		IsTopicMessage:  true,
+		ForumTopicCreated: &ForumTopicCreated{
+			Name: name, IconColor: iconColor, IconCustomEmojiID: iconEmojiID,
+		},
+	})
+	return topic
+}
+
+// ForumTopics lists the topics of chatID in creation order.
+func (b *botEntry) ForumTopics(chatID int64) []ForumTopic {
+	b.topicsMu.Lock()
+	defer b.topicsMu.Unlock()
+	return append([]ForumTopic(nil), b.topics[chatID]...)
 }
 
 // DeleteMessage removes every stored entry for chatID+messageID, including

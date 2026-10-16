@@ -21,6 +21,15 @@
     /* sendChatAction status ("typing…"), shown until the bot's next message. */
     .msg.chat-action { color: #777; font-style: italic; animation: chatActionPulse 1.2s ease-in-out infinite; }
     @keyframes chatActionPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+    /* Forum topics: filter tabs, per-message topic label, topic-created service row. */
+    #topic-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.45rem 1rem; background: #fff; border-bottom: 1px solid #ddd; }
+    #topic-tabs:empty { display: none; }
+    .topic-tab { padding: 0.25rem 0.7rem; font-size: 0.8rem; border: 1px solid #c8c8cc; border-radius: 999px; background: #efeef0; color: #444; text-decoration: none; }
+    .topic-tab.active { background: #2a7fff; color: #fff; border-color: #2a7fff; }
+    .topic-label { display: block; font-size: 0.7rem; color: #2a7fff; font-weight: 600; margin-bottom: 0.15rem; }
+    .msg.service { align-self: center; max-width: 90%; background: rgba(0,0,0,0.06); color: #555; font-size: 0.85rem; text-align: center; }
+    .msg.service a { color: #2a7fff; font-weight: 600; text-decoration: none; }
+    .msg.service .ts { display: inline; }
     .msg img { max-width: 100%; border-radius: 4px; margin-top: 0.3rem; }
     .kbd { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
     .kbd-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
@@ -107,8 +116,10 @@
   <div id="toast"></div>
   <div id="alert"></div>
 
+  <nav id="topic-tabs"></nav>
+
   <div id="messages"
-       hx-get="/debug/chat/{{.Token}}/{{.ChatID}}/messages"
+       hx-get="{{.MessagesURL}}"
        hx-trigger="load, every 500ms"
        hx-swap="morph:innerHTML"
        hx-on::before-swap="this._stick = this.scrollHeight - this.scrollTop - this.clientHeight < 50"
