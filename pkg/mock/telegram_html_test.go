@@ -56,6 +56,12 @@ y := 2</code></pre>`,
 			notWant: []string{"<b>"},
 		},
 		{
+			name:    "commands only at start or after whitespace",
+			in:      "/start, yes/no, see https://t.me/x\n/help",
+			want:    []string{`hx-swap="none">/start</a>, yes/no, see https://t.me/x<br><a class="cmd"`, `hx-swap="none">/help</a>`},
+			notWant: []string{`>/no</a>`, `>/x</a>`},
+		},
+		{
 			name:    "commands clickable outside links and code",
 			in:      `Try /start or <code>/help</code>`,
 			want:    []string{`<a class="cmd"`, "<code>/help</code>"},
