@@ -44,9 +44,12 @@
   {{end}}
 {{end}}
 
-{{/* Forum topic tabs, swapped out-of-band so new topics appear on the next poll. */}}
-{{/* No whitespace inside <nav>: #topic-tabs:empty hides the bar for chats without topics. */}}
-<nav id="topic-tabs" hx-swap-oob="true">{{range .TopicTabs}}<a class="topic-tab{{if .Active}} active{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}</nav>
+{{/* Forum topic tabs, sticky at the top of #messages. Part of the morphed
+     content (not an OOB swap) so the links stay the same DOM nodes across
+     polls and clicks are not lost. */}}
+{{if .TopicTabs}}
+<nav id="topic-tabs">{{range .TopicTabs}}<a class="topic-tab{{if .Active}} active{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}</nav>
+{{end}}
 
 {{if not .Items}}
   <div class="empty">{{.EmptyHint}}</div>

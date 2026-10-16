@@ -19,8 +19,7 @@
     .msg .ts { display: block; font-size: 0.7rem; color: #999; margin-top: 0.2rem; font-family: ui-monospace, monospace; }
     .msg.user .ts { color: rgba(255,255,255,0.7); }
     /* Forum topics: filter tabs, per-message topic label, topic-created service row. */
-    #topic-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.45rem 1rem; background: #fff; border-bottom: 1px solid #ddd; }
-    #topic-tabs:empty { display: none; }
+    #topic-tabs { position: sticky; top: -1rem; z-index: 1; display: flex; flex-wrap: wrap; gap: 0.35rem; margin: -1rem -1rem 0; padding: 0.45rem 1rem; background: #fff; border-bottom: 1px solid #ddd; }
     .topic-tab { padding: 0.25rem 0.7rem; font-size: 0.8rem; border: 1px solid #c8c8cc; border-radius: 999px; background: #efeef0; color: #444; text-decoration: none; }
     .topic-tab.active { background: #2a7fff; color: #fff; border-color: #2a7fff; }
     .topic-label { display: block; font-size: 0.7rem; color: #2a7fff; font-weight: 600; margin-bottom: 0.15rem; }
@@ -112,8 +111,6 @@
        show_alert=true (modal, requires user dismissal). */}}
   <div id="toast"></div>
   <div id="alert"></div>
-
-  <nav id="topic-tabs"></nav>
 
   <div id="messages"
        hx-get="{{.MessagesURL}}"

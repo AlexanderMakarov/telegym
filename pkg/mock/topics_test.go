@@ -150,7 +150,7 @@ func TestDebugChatTopicTabsAndFilter(t *testing.T) {
 	base := "/debug/chat/" + token + "/42/messages?name=ann"
 
 	doTopicsTestPOST(t, srv, "/bot"+token+"/sendMessage", `{"chat_id":42,"text":"general hello"}`)
-	if html := topicsTestChatHTML(t, srv, base); !strings.Contains(html, `<nav id="topic-tabs" hx-swap-oob="true"></nav>`) || strings.Contains(html, "topic-label") {
+	if html := topicsTestChatHTML(t, srv, base); strings.Contains(html, "topic-tabs") || strings.Contains(html, "topic-label") {
 		t.Fatalf("chat without topics must render no topic chrome: %s", html)
 	}
 
