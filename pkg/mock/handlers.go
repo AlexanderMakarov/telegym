@@ -404,6 +404,7 @@ func (h *Handlers) SendDice(c *gin.Context, bot *botEntry) {
 
 	m := h.newBotMessage(bot, chatID)
 	m.Dice = &Dice{Emoji: emoji, Value: value}
+	setMessageThread(&m, body)
 	bot.AppendMessage(m)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
 }

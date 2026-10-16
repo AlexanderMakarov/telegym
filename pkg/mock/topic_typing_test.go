@@ -65,3 +65,28 @@ func TestChatActionWithoutTopicsHasNoLabel(t *testing.T) {
 		t.Fatalf("chat without topics: plain typing bubble, no topic label:\n%s", html)
 	}
 }
+
+func TestDiceInTopicEndsTopicTyping(t *testing.T) {
+	const token = "741:topic-dice"
+	srv := New(Config{Quiet: true})
+	bot := srv.Store().Bot(token)
+	theory := createTestTopic(t, srv, token, `{"chat_id":42,"name":"Theory"}`).MessageThreadID
+	doTypingTestPOST(t, srv, "/bot"+token+"/sendChatAction",
+		fmt.Sprintf(`{"chat_id":42,"message_thread_id":%d,"action":"typing"}`, theory))
+
+	bot.typingMu.Lock()
+	ty := bot.typing[typingKey{42, theory}]
+	ty.since = ty.since.Add(-2 * typingMinVisible)
+	bot.typing[typingKey{42, theory}] = ty
+	bot.typingMu.Unlock()
+
+	doTypingTestPOST(t, srv, "/bot"+token+"/sendDice",
+		fmt.Sprintf(`{"chat_id":42,"message_thread_id":%d}`, theory))
+	if len(bot.ActiveTyping(42)) != 0 {
+		t.Fatal("a dice sent to Theory must end Theory typing")
+	}
+	msgs := bot.Messages(42, 1)
+	if len(msgs) != 1 || msgs[0].Dice == nil || msgs[0].MessageThreadID != theory || !msgs[0].IsTopicMessage {
+		t.Fatalf("dice must be stored in the Theory topic: %+v", msgs)
+	}
+}
