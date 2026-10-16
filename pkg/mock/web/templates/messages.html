@@ -75,3 +75,6 @@
     <span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span>
   </div>
 {{end}}
+{{if .ChatAction}}
+  <div class="msg bot chat-action" aria-live="polite">{{.ChatAction}}</div>
+{{end}}

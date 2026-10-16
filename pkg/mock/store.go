@@ -54,6 +54,11 @@ type botEntry struct {
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
 
+	// Per-chat chat action from sendChatAction ("typing", "upload_photo",
+	// ...). Cleared by the next outbound message or after typingTTL.
+	typingMu sync.Mutex
+	typing   map[int64]chatTyping
+
 	maxMessages int
 	maxInputs   int
 }
@@ -233,6 +238,7 @@ func (b *botEntry) AppendMessage(m Message) {
 	if b.parent != nil {
 		m.EventSeq = int64(b.parent.NextMessageID())
 	}
+	b.ClearTyping(m.Chat.ID)
 	b.msgMu.Lock()
 	b.messages = append(b.messages, m)
 	if over := len(b.messages) - b.maxMessages; over > 0 {
@@ -338,6 +344,63 @@ func (b *botEntry) PopToast(chatID int64) (Toast, bool) {
 	t := q[0]
 	b.toasts[chatID] = q[1:]
 	return t, true
+}
+
+// Telegram shows a chat action for up to 5 seconds or until the bot's next
+// message. typingMinVisible keeps the bubble on screen briefly even when the
+// message follows immediately, so the debug chat poll (every 500ms) sees it.
+const (
+	typingTTL        = 5 * time.Second
+	typingMinVisible = time.Second
+)
+
+type chatTyping struct {
+	action string
+	since  time.Time
+	until  time.Time
+}
+
+// SetTyping records a sendChatAction for chatID.
+func (b *botEntry) SetTyping(chatID int64, action string) {
+	now := time.Now()
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	if b.typing == nil {
+		b.typing = map[int64]chatTyping{}
+	}
+	b.typing[chatID] = chatTyping{action: action, since: now, until: now.Add(typingTTL)}
+}
+
+// ClearTyping ends the chat action for chatID, keeping it until the
+// typingMinVisible window has passed.
+func (b *botEntry) ClearTyping(chatID int64) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	t, ok := b.typing[chatID]
+	if !ok {
+		return
+	}
+	if minUntil := t.since.Add(typingMinVisible); time.Now().Before(minUntil) {
+		t.until = minUntil
+		b.typing[chatID] = t
+		return
+	}
+	delete(b.typing, chatID)
+}
+
+// ActiveTyping returns the unexpired chat action for chatID, if any.
+func (b *botEntry) ActiveTyping(chatID int64) (string, bool) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	t, ok := b.typing[chatID]
+	if !ok {
+		return "", false
+	}
+	if !time.Now().Before(t.until) {
+		delete(b.typing, chatID)
+		return "", false
+	}
+	return t.action, true
 }
 
 // ClearMessages drops all stored outbound messages for the bot.

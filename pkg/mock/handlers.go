@@ -444,8 +444,46 @@ func (h *Handlers) GetWebhookInfo(c *gin.Context, bot *botEntry) {
 
 // GenericOK handles methods without a custom implementation but that bots
 // commonly call. Always returns {ok:true, result:true} which is the right
-// shape for the most common boolean-returning methods (sendChatAction,
-// pinChatMessage, promoteChatMember, etc).
+// shape for the most common boolean-returning methods (pinChatMessage,
+// promoteChatMember, etc).
 func (h *Handlers) GenericOK(c *gin.Context, _ *botEntry) {
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
+}
+
+// chatActionLabels maps every sendChatAction action to the status line a
+// Telegram client shows while it is active.
+var chatActionLabels = map[string]string{
+	"typing":            "typing…",
+	"upload_photo":      "sending a photo…",
+	"record_video":      "recording a video…",
+	"upload_video":      "sending a video…",
+	"record_voice":      "recording a voice message…",
+	"upload_voice":      "sending a voice message…",
+	"upload_document":   "sending a file…",
+	"choose_sticker":    "choosing a sticker…",
+	"find_location":     "finding a location…",
+	"record_video_note": "recording a video message…",
+	"upload_video_note": "sending a video message…",
+}
+
+// SendChatAction records the action so /debug/chat can show the bot's
+// "typing…" status until its next message or the 5s timeout.
+func (h *Handlers) SendChatAction(c *gin.Context, bot *botEntry) {
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	chatID := toInt64(body["chat_id"])
+	if chatID == 0 {
+		errResp(c, http.StatusBadRequest, "Bad Request: chat_id is required")
+		return
+	}
+	action := toString(body["action"])
+	if _, ok := chatActionLabels[action]; !ok {
+		errResp(c, http.StatusBadRequest, "Bad Request: wrong parameter action in request")
+		return
+	}
+	bot.SetTyping(chatID, action)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
