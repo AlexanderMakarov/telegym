@@ -189,6 +189,7 @@ type messagesVM struct {
 	ReplyKeyboard [][]string    // current reply keyboard rows (button texts); nil if cleared
 	Placeholder   string        // input_field_placeholder from latest reply keyboard
 	Toast         *toastVM      // pending callback toast for this chat, drained on read
+	ChatAction    string        // "typing…" etc. while a sendChatAction is active
 }
 
 type toastVM struct {
@@ -221,6 +222,10 @@ func (h *chatHandlers) messages(c *gin.Context) {
 	if t, ok := bot.PopToast(chatID); ok {
 		toast = &toastVM{Text: t.Text, ShowAlert: t.ShowAlert}
 	}
+	chatAction := ""
+	if action, ok := bot.ActiveTyping(chatID); ok {
+		chatAction = chatActionLabels[action]
+	}
 
 	render(c, "messages.html", messagesVM{
 		Items:         items,
@@ -231,6 +236,7 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		ReplyKeyboard: kbRows,
 		Placeholder:   placeholder,
 		Toast:         toast,
+		ChatAction:    chatAction,
 	})
 }
 
