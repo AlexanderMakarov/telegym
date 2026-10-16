@@ -262,12 +262,11 @@ func (h *chatHandlers) attachPhotoURLs(items []msgVM, botMsgs []Message) {
 	}
 }
 
-// isImage trusts an image/* part type and otherwise sniffs the bytes:
-// clients often upload photos as application/octet-stream.
+// isImage sniffs the bytes instead of trusting the part Content-Type:
+// clients often upload photos as application/octet-stream, and a declared
+// image/svg+xml part would be served inline with its scripts. Sniffing
+// never reports SVG as an image.
 func isImage(f *storedFile) bool {
-	if strings.HasPrefix(f.ContentType, "image/") {
-		return true
-	}
 	return strings.HasPrefix(http.DetectContentType(f.Bytes), "image/")
 }
 

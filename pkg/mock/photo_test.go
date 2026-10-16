@@ -46,6 +46,7 @@ func TestDebugChatShowsUploadedPhotos(t *testing.T) {
 	sendTestPhotoUpload(t, srv, token, "image/png", pngBytes.Bytes())
 	sendTestPhotoUpload(t, srv, token, "application/octet-stream", pngBytes.Bytes())
 	sendTestPhotoUpload(t, srv, token, "application/octet-stream", []byte("not an image"))
+	sendTestPhotoUpload(t, srv, token, "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
 	// file_id-only send: no bytes in the mock.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/bot"+token+"/sendPhoto", strings.NewReader(`{"chat_id":42,"photo":"AgACcached"}`))
@@ -59,8 +60,8 @@ func TestDebugChatShowsUploadedPhotos(t *testing.T) {
 	if len(srcs) != 2 {
 		t.Fatalf("want 2 rendered photos (png + sniffed octet-stream), got %d:\n%s", len(srcs), html)
 	}
-	if n := strings.Count(html, `<span class="media-tag">photo</span>`); n != 2 {
-		t.Fatalf("want 2 photo tags for non-image / file_id sends, got %d:\n%s", n, html)
+	if n := strings.Count(html, `<span class="media-tag">photo</span>`); n != 3 {
+		t.Fatalf("want 3 photo tags for non-image / SVG / file_id sends, got %d:\n%s", n, html)
 	}
 
 	img := httptest.NewRecorder()
