@@ -238,7 +238,6 @@ func (b *botEntry) AppendMessage(m Message) {
 	if b.parent != nil {
 		m.EventSeq = int64(b.parent.NextMessageID())
 	}
-	b.ClearTyping(m.Chat.ID)
 	b.msgMu.Lock()
 	b.messages = append(b.messages, m)
 	if over := len(b.messages) - b.maxMessages; over > 0 {
