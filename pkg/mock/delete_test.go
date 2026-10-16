@@ -54,6 +54,7 @@ func TestDeleteMessage(t *testing.T) {
 		{"stored message", fmt.Sprintf(`{"chat_id":42,"message_id":%d}`, sent.MessageID), http.StatusOK},
 		{"not in store (user message or evicted)", `{"chat_id":42,"message_id":999999}`, http.StatusOK},
 		{"unknown chat", `{"chat_id":7,"message_id":1}`, http.StatusOK},
+		{"channel username", `{"chat_id":"@channel","message_id":1}`, http.StatusOK},
 		{"missing message_id", `{"chat_id":42}`, http.StatusBadRequest},
 		{"malformed body", `{"chat_id":`, http.StatusBadRequest},
 	}

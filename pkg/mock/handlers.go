@@ -265,13 +265,15 @@ func (h *Handlers) DeleteMessage(c *gin.Context, bot *botEntry) {
 		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
 		return
 	}
-	chatID := toInt64(body["chat_id"])
 	msgID := toInt(body["message_id"])
-	if chatID == 0 || msgID == 0 {
-		errResp(c, http.StatusBadRequest, "Bad Request: chat_id and message_id are required")
+	if msgID == 0 {
+		errResp(c, http.StatusBadRequest, "Bad Request: message_id is required")
 		return
 	}
-	bot.DeleteMessage(chatID, msgID)
+	// chat_id may be a @channel username, which the store does not index.
+	if chatID := toInt64(body["chat_id"]); chatID != 0 {
+		bot.DeleteMessage(chatID, msgID)
+	}
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 

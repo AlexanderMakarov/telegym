@@ -249,7 +249,7 @@ func (b *botEntry) AppendMessage(m Message) {
 // DeleteMessage removes every stored entry for chatID+messageID, including
 // earlier edit revisions, so the bubble disappears from /debug/chat.
 // Returns false when nothing matched (e.g. a user message or an entry
-// already evicted from the ring buffer).
+// already evicted from the buffer).
 func (b *botEntry) DeleteMessage(chatID int64, messageID int) bool {
 	b.msgMu.Lock()
 	defer b.msgMu.Unlock()
