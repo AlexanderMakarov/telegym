@@ -483,7 +483,7 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 		seenID[m.MessageID] = true
 		v := msgVM{
 			Side:      "bot",
-			Text:      renderTextWithCommands(pickText(m), token, chatID, name),
+			Text:      renderMessageText(m, token, chatID, name),
 			MessageID: m.MessageID,
 			Stamp:     time.Unix(m.Date, 0).Format("15:04:05"),
 			MediaTag:  mediaTag(m),
@@ -564,9 +564,15 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 	if text == "" {
 		return ""
 	}
-	escaped := template.HTMLEscapeString(text)
+	out := linkifyCommands(template.HTMLEscapeString(text), token, chatID, name)
+	out = strings.ReplaceAll(out, "\n", "<br>")
+	return template.HTML(out)
+}
 
-	out := commandRe.ReplaceAllStringFunc(escaped, func(cmd string) string {
+// linkifyCommands wraps every /command in already-escaped text in a
+// clickable element that sends it through the compose form path.
+func linkifyCommands(escaped, token string, chatID int64, name string) string {
+	return commandRe.ReplaceAllStringFunc(escaped, func(cmd string) string {
 		// cmd is matched against already-escaped text; it can only contain
 		// safe characters (/[A-Za-z0-9_]+) so no further escaping needed.
 		vals, _ := json.Marshal(map[string]string{"text": cmd, "name": name})
@@ -576,8 +582,19 @@ func renderTextWithCommands(text, token string, chatID int64, name string) templ
 			template.HTMLEscapeString(string(vals)), cmd,
 		)
 	})
-	out = strings.ReplaceAll(out, "\n", "<br>")
-	return template.HTML(out)
+}
+
+// renderMessageText renders a bot message body: a sendRichMessage body,
+// Telegram HTML when the bot sent parse_mode=HTML, plain text otherwise.
+func renderMessageText(m Message, token string, chatID int64, name string) template.HTML {
+	if m.RichMessage != nil {
+		return renderRichMessage(m.RichMessage, token, chatID, name)
+	}
+	text := pickText(m)
+	if text != "" && strings.EqualFold(m.ParseMode, "HTML") {
+		return renderTelegramHTML(text, token, chatID, name)
+	}
+	return renderTextWithCommands(text, token, chatID, name)
 }
 
 func pickText(m Message) string {
