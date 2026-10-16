@@ -44,11 +44,22 @@
   {{end}}
 {{end}}
 
+{{/* Forum topic tabs, sticky at the top of #messages. Part of the morphed
+     content (not an OOB swap) so the links stay the same DOM nodes across
+     polls and clicks are not lost. */}}
+{{if .TopicTabs}}
+<nav id="topic-tabs">{{range .TopicTabs}}<a class="topic-tab{{if .Active}} active{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}</nav>
+{{end}}
+
 {{if not .Items}}
   <div class="empty">{{.EmptyHint}}</div>
 {{end}}
 {{range .Items}}
+  {{if .TopicCreated}}
+  <div class="msg service">The topic <a href="{{.TopicHref}}">{{.TopicCreated}}</a> was created <span class="ts">{{.Stamp}}</span></div>
+  {{else}}
   <div class="msg {{.Side}}">
+    {{if .TopicLabel}}<span class="topic-label">{{.TopicLabel}}</span>{{end}}
     {{if .StickerEmoji}}
       <div class="sticker-big" title="sticker {{.StickerFileID}}">{{.StickerEmoji}}</div>
     {{else if .StickerFileID}}
@@ -74,6 +85,7 @@
     {{end}}
     <span class="ts">{{.Stamp}}{{if .Side | eq "bot"}} · #{{.MessageID}}{{end}}</span>
   </div>
+  {{end}}
 {{end}}
 {{if .ChatAction}}
   <div class="msg bot chat-action" aria-live="polite">{{.ChatAction}}</div>

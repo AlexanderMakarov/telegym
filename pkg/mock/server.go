@@ -229,6 +229,9 @@ func (s *Server) registerBotAPI(g *gin.RouterGroup) {
 	g.POST("/answerCallbackQuery", s.withBot(s.handlers.AnswerCallbackQuery))
 	g.POST("/sendChatAction", s.withBot(s.handlers.SendChatAction))
 
+	// Forum topics
+	g.POST("/createForumTopic", s.withBot(s.handlers.CreateForumTopic))
+
 	// Identity / webhook lifecycle
 	g.GET("/getMe", s.withBot(s.handlers.GetMe))
 	g.POST("/getMe", s.withBot(s.handlers.GetMe))
