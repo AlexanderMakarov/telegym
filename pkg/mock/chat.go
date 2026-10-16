@@ -195,12 +195,17 @@ type messagesVM struct {
 	Token         string
 	ChatID        int64
 	Name          string
-	EmptyHint     template.HTML // pre-rendered hint for the empty state ("try /start ...")
-	ReplyKeyboard [][]string    // current reply keyboard rows (button texts); nil if cleared
-	Placeholder   string        // input_field_placeholder from latest reply keyboard
-	Toast         *toastVM      // pending callback toast for this chat, drained on read
-	ChatAction    string        // "typing…" etc. while a sendChatAction is active
-	TopicTabs     []topicTabVM  // All / General / one per forum topic; empty without topics
+	EmptyHint     template.HTML  // pre-rendered hint for the empty state ("try /start ...")
+	ReplyKeyboard [][]string     // current reply keyboard rows (button texts); nil if cleared
+	Placeholder   string         // input_field_placeholder from latest reply keyboard
+	Toast         *toastVM       // pending callback toast for this chat, drained on read
+	ChatActions   []chatActionVM // "typing…" etc. while a sendChatAction is active
+	TopicTabs     []topicTabVM   // All / General / one per forum topic; empty without topics
+}
+
+type chatActionVM struct {
+	Label string // "typing…", "sending a photo…", ...
+	Topic string // topic name in the "All" view of a chat with topics
 }
 
 type topicTabVM struct {
@@ -260,9 +265,14 @@ func (h *chatHandlers) messages(c *gin.Context) {
 	if t, ok := bot.PopToast(chatID); ok {
 		toast = &toastVM{Text: t.Text, ShowAlert: t.ShowAlert}
 	}
-	chatAction := ""
-	if action, ok := bot.ActiveTyping(chatID); ok {
-		chatAction = chatActionLabels[action]
+	// The All view shows every topic's chat action (labeled when the chat
+	// has topics); a topic tab shows only its own.
+	var chatActions []chatActionVM
+	for _, a := range bot.ActiveTyping(chatID) {
+		if activeTab != "" && strconv.Itoa(a.Thread) != activeTab {
+			continue
+		}
+		chatActions = append(chatActions, chatActionVM{Label: chatActionLabels[a.Action], Topic: topicNames[a.Thread]})
 	}
 
 	render(c, "messages.html", messagesVM{
@@ -274,7 +284,7 @@ func (h *chatHandlers) messages(c *gin.Context) {
 		ReplyKeyboard: kbRows,
 		Placeholder:   placeholder,
 		Toast:         toast,
-		ChatAction:    chatAction,
+		ChatActions:   chatActions,
 		TopicTabs:     buildTopicTabs(token, chatID, name, activeTab, topics),
 	})
 }

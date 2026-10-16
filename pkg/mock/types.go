@@ -66,6 +66,10 @@ type Message struct {
 	// so pollers can distinguish them. Real Telegram has no analogous
 	// field; clients that don't care can ignore it.
 	EventSeq int64 `json:"_event_seq,omitempty"`
+
+	// isNew marks a message from a send* method (not an edit): storing it
+	// ends the sendChatAction status in its topic.
+	isNew bool
 }
 
 // ForumTopic is the createForumTopic result.

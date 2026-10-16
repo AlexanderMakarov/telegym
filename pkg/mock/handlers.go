@@ -132,12 +132,11 @@ func parseEntities(v any) []Entity {
 }
 
 // newBotMessage builds a baseline Message authored by the given bot at "now".
-// Every send* handler calls it once its request is valid, so it also ends
-// the chat's sendChatAction status: in Telegram a new message does that,
-// an edit does not.
+// It is marked new so storing it ends the sendChatAction status in its
+// topic: in Telegram a new message does that, an edit does not.
 func (h *Handlers) newBotMessage(bot *botEntry, chatID int64) Message {
-	bot.ClearTyping(chatID)
 	return Message{
+		isNew:     true,
 		MessageID: h.Store.NextMessageID(),
 		From:      &bot.identity,
 		Date:      time.Now().Unix(),
@@ -495,7 +494,7 @@ func (h *Handlers) SendChatAction(c *gin.Context, bot *botEntry) {
 		errResp(c, http.StatusBadRequest, "Bad Request: wrong parameter action in request")
 		return
 	}
-	bot.SetTyping(chatID, action)
+	bot.SetTyping(chatID, toInt(body["message_thread_id"]), action)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
