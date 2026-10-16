@@ -68,6 +68,7 @@ func (h *Handlers) SendRichMessage(c *gin.Context, bot *botEntry) {
 
 	m := h.newBotMessage(bot, chatID)
 	m.ReplyMarkup = parseReplyMarkup(body["reply_markup"])
+	setMessageThread(&m, body)
 	blocks := in.Blocks
 	if blocks == nil {
 		blocks = []json.RawMessage{}

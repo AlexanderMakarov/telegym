@@ -54,6 +54,15 @@ type botEntry struct {
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
 
+	// Chat action from sendChatAction ("typing", "upload_photo", ...) per
+	// chat and forum topic. Cleared by the next new message in that topic
+	// or after typingTTL.
+	typingMu sync.RWMutex
+	typing   map[typingKey]chatTyping
+	// Forum topics created via createForumTopic, per chat in creation order.
+	topicsMu sync.Mutex
+	topics   map[int64][]ForumTopic
+
 	maxMessages int
 	maxInputs   int
 }
@@ -230,6 +239,17 @@ func (b *botEntry) Webhook() (url, secret string) {
 // the bot edits message X and we store the new state as a separate
 // entry with the same MessageID but a higher EventSeq).
 func (b *botEntry) AppendMessage(m Message) {
+	if m.isNew {
+		b.ClearTyping(m.Chat.ID, m.MessageThreadID)
+	}
+	b.storeMessage(m)
+
+	if b.parent != nil && b.parent.Proxy != nil {
+		b.parent.Proxy.Dispatch(b.token, m)
+	}
+}
+
+func (b *botEntry) storeMessage(m Message) {
 	if b.parent != nil {
 		m.EventSeq = int64(b.parent.NextMessageID())
 	}
@@ -240,10 +260,46 @@ func (b *botEntry) AppendMessage(m Message) {
 		b.messages = b.messages[:b.maxMessages]
 	}
 	b.msgMu.Unlock()
+}
 
-	if b.parent != nil && b.parent.Proxy != nil {
-		b.parent.Proxy.Dispatch(b.token, m)
+// CreateForumTopic opens a new topic in chatID. Like Telegram, every call
+// creates a new topic (names need not be unique) and the topic's
+// message_thread_id is the message_id of its forum_topic_created service
+// message, which is stored in the topic thread. The service message is
+// not relayed to the proxy - real Telegram creates it itself.
+func (b *botEntry) CreateForumTopic(chatID int64, name string, iconColor int, iconEmojiID string) ForumTopic {
+	threadID := 1
+	if b.parent != nil {
+		threadID = b.parent.NextMessageID()
 	}
+	topic := ForumTopic{MessageThreadID: threadID, Name: name, IconColor: iconColor, IconCustomEmojiID: iconEmojiID}
+
+	b.topicsMu.Lock()
+	if b.topics == nil {
+		b.topics = map[int64][]ForumTopic{}
+	}
+	b.topics[chatID] = append(b.topics[chatID], topic)
+	b.topicsMu.Unlock()
+
+	b.storeMessage(Message{
+		MessageID:       threadID,
+		From:            &b.identity,
+		Date:            time.Now().Unix(),
+		Chat:            Chat{ID: chatID, Type: "private"},
+		MessageThreadID: threadID,
+		IsTopicMessage:  true,
+		ForumTopicCreated: &ForumTopicCreated{
+			Name: name, IconColor: iconColor, IconCustomEmojiID: iconEmojiID,
+		},
+	})
+	return topic
+}
+
+// ForumTopics lists the topics of chatID in creation order.
+func (b *botEntry) ForumTopics(chatID int64) []ForumTopic {
+	b.topicsMu.Lock()
+	defer b.topicsMu.Unlock()
+	return append([]ForumTopic(nil), b.topics[chatID]...)
 }
 
 // DeleteMessage removes every stored entry for chatID+messageID, including
@@ -358,6 +414,90 @@ func (b *botEntry) PopToast(chatID int64) (Toast, bool) {
 	t := q[0]
 	b.toasts[chatID] = q[1:]
 	return t, true
+}
+
+// Telegram shows a chat action for up to 5 seconds or until the bot's next
+// message. typingMinVisible keeps the bubble on screen briefly even when the
+// message follows immediately, so the debug chat poll (every 500ms) sees it.
+const (
+	typingTTL        = 5 * time.Second
+	typingMinVisible = time.Second
+)
+
+// typingKey scopes a chat action to a chat and forum topic (thread 0 =
+// General or a chat without topics).
+type typingKey struct {
+	chatID int64
+	thread int
+}
+
+type chatTyping struct {
+	action string
+	since  time.Time
+	until  time.Time
+}
+
+// ChatAction is an active sendChatAction in one topic of a chat.
+type ChatAction struct {
+	Thread int
+	Action string
+}
+
+// SetTyping records a sendChatAction for chatID in the given topic.
+func (b *botEntry) SetTyping(chatID int64, thread int, action string) {
+	now := time.Now()
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	if b.typing == nil {
+		b.typing = map[typingKey]chatTyping{}
+	}
+	b.typing[typingKey{chatID, thread}] = chatTyping{action: action, since: now, until: now.Add(typingTTL)}
+}
+
+// ClearTyping ends the chat action in one topic of chatID, keeping it
+// until the typingMinVisible window has passed.
+func (b *botEntry) ClearTyping(chatID int64, thread int) {
+	key := typingKey{chatID, thread}
+	// Every send calls this; skip the write lock when nothing is typing so
+	// concurrent sends do not serialize here.
+	b.typingMu.RLock()
+	_, ok := b.typing[key]
+	b.typingMu.RUnlock()
+	if !ok {
+		return
+	}
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	t, ok := b.typing[key]
+	if !ok {
+		return
+	}
+	if minUntil := t.since.Add(typingMinVisible); time.Now().Before(minUntil) {
+		t.until = minUntil
+		b.typing[key] = t
+		return
+	}
+	delete(b.typing, key)
+}
+
+// ActiveTyping returns the unexpired chat actions of chatID, ordered by
+// topic.
+func (b *botEntry) ActiveTyping(chatID int64) []ChatAction {
+	now := time.Now()
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+	var out []ChatAction
+	for key, t := range b.typing {
+		if !now.Before(t.until) {
+			delete(b.typing, key)
+			continue
+		}
+		if key.chatID == chatID {
+			out = append(out, ChatAction{Thread: key.thread, Action: t.action})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Thread < out[j].Thread })
+	return out
 }
 
 // ClearMessages drops all stored outbound messages for the bot.
