@@ -47,6 +47,10 @@ type Message struct {
 	CaptionEntities []Entity     `json:"caption_entities,omitempty"`
 	ReplyMarkup     *ReplyMarkup `json:"reply_markup,omitempty"`
 
+	// ParseMode is the parse_mode the bot sent with text or caption. Mock
+	// internal: real Telegram returns parsed entities instead.
+	ParseMode string `json:"-"`
+
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Video     *Video      `json:"video,omitempty"`
 	Animation *Animation  `json:"animation,omitempty"`
@@ -54,6 +58,7 @@ type Message struct {
 	Dice      *Dice       `json:"dice,omitempty"`
 
 	ForumTopicCreated *ForumTopicCreated `json:"forum_topic_created,omitempty"`
+	RichMessage       *RichMessage       `json:"rich_message,omitempty"`
 
 	// EventSeq is a mock-internal monotonic counter, incremented on every
 	// AppendMessage. Two entries with the same MessageID (a bot send
