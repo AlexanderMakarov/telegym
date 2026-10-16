@@ -82,14 +82,14 @@ func TestSendChatActionShownUntilNextMessage(t *testing.T) {
 
 func TestChatActionExpiresAfterTTL(t *testing.T) {
 	bot := New(Config{Quiet: true}).Store().Bot("741:typing")
-	bot.SetTyping(7, "upload_photo")
-	if action, ok := bot.ActiveTyping(7); !ok || action != "upload_photo" {
-		t.Fatalf("ActiveTyping = %q, %v", action, ok)
+	bot.SetTyping(7, 0, "upload_photo")
+	if got := bot.ActiveTyping(7); len(got) != 1 || got[0].Action != "upload_photo" {
+		t.Fatalf("ActiveTyping = %+v", got)
 	}
 	bot.typingMu.Lock()
-	bot.typing[7] = chatTyping{action: "upload_photo", since: time.Now().Add(-typingTTL), until: time.Now()}
+	bot.typing[typingKey{7, 0}] = chatTyping{action: "upload_photo", since: time.Now().Add(-typingTTL), until: time.Now()}
 	bot.typingMu.Unlock()
-	if _, ok := bot.ActiveTyping(7); ok {
+	if got := bot.ActiveTyping(7); len(got) != 0 {
 		t.Fatal("chat action must expire after typingTTL")
 	}
 }
@@ -101,17 +101,17 @@ func TestChatActionSurvivesEdits(t *testing.T) {
 	doTypingTestPOST(t, srv, "/bot"+token+"/sendChatAction", `{"chat_id":7,"action":"typing"}`)
 	// Age the action past the min-visible window so a clear would drop it.
 	bot.typingMu.Lock()
-	ty := bot.typing[7]
+	ty := bot.typing[typingKey{7, 0}]
 	ty.since = ty.since.Add(-2 * typingMinVisible)
-	bot.typing[7] = ty
+	bot.typing[typingKey{7, 0}] = ty
 	bot.typingMu.Unlock()
 
 	doTypingTestPOST(t, srv, "/bot"+token+"/editMessageText", `{"chat_id":7,"message_id":1,"text":"streamed"}`)
-	if _, ok := bot.ActiveTyping(7); !ok {
+	if len(bot.ActiveTyping(7)) != 1 {
 		t.Fatal("an edit must not end the chat action")
 	}
 	doTypingTestPOST(t, srv, "/bot"+token+"/sendMessage", `{"chat_id":7,"text":"done"}`)
-	if _, ok := bot.ActiveTyping(7); ok {
+	if len(bot.ActiveTyping(7)) != 0 {
 		t.Fatal("a new message must end the chat action")
 	}
 }

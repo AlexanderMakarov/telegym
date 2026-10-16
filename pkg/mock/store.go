@@ -54,10 +54,11 @@ type botEntry struct {
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
 
-	// Per-chat chat action from sendChatAction ("typing", "upload_photo",
-	// ...). Cleared by the next outbound message or after typingTTL.
+	// Chat action from sendChatAction ("typing", "upload_photo", ...) per
+	// chat and forum topic. Cleared by the next new message in that topic
+	// or after typingTTL.
 	typingMu sync.Mutex
-	typing   map[int64]chatTyping
+	typing   map[typingKey]chatTyping
 	// Forum topics created via createForumTopic, per chat in creation order.
 	topicsMu sync.Mutex
 	topics   map[int64][]ForumTopic
@@ -238,6 +239,9 @@ func (b *botEntry) Webhook() (url, secret string) {
 // the bot edits message X and we store the new state as a separate
 // entry with the same MessageID but a higher EventSeq).
 func (b *botEntry) AppendMessage(m Message) {
+	if m.isNew {
+		b.ClearTyping(m.Chat.ID, m.MessageThreadID)
+	}
 	b.storeMessage(m)
 
 	if b.parent != nil && b.parent.Proxy != nil {
@@ -420,53 +424,72 @@ const (
 	typingMinVisible = time.Second
 )
 
+// typingKey scopes a chat action to a chat and forum topic (thread 0 =
+// General or a chat without topics).
+type typingKey struct {
+	chatID int64
+	thread int
+}
+
 type chatTyping struct {
 	action string
 	since  time.Time
 	until  time.Time
 }
 
-// SetTyping records a sendChatAction for chatID.
-func (b *botEntry) SetTyping(chatID int64, action string) {
+// ChatAction is an active sendChatAction in one topic of a chat.
+type ChatAction struct {
+	Thread int
+	Action string
+}
+
+// SetTyping records a sendChatAction for chatID in the given topic.
+func (b *botEntry) SetTyping(chatID int64, thread int, action string) {
 	now := time.Now()
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()
 	if b.typing == nil {
-		b.typing = map[int64]chatTyping{}
+		b.typing = map[typingKey]chatTyping{}
 	}
-	b.typing[chatID] = chatTyping{action: action, since: now, until: now.Add(typingTTL)}
+	b.typing[typingKey{chatID, thread}] = chatTyping{action: action, since: now, until: now.Add(typingTTL)}
 }
 
-// ClearTyping ends the chat action for chatID, keeping it until the
-// typingMinVisible window has passed.
-func (b *botEntry) ClearTyping(chatID int64) {
+// ClearTyping ends the chat action in one topic of chatID, keeping it
+// until the typingMinVisible window has passed.
+func (b *botEntry) ClearTyping(chatID int64, thread int) {
+	key := typingKey{chatID, thread}
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()
-	t, ok := b.typing[chatID]
+	t, ok := b.typing[key]
 	if !ok {
 		return
 	}
 	if minUntil := t.since.Add(typingMinVisible); time.Now().Before(minUntil) {
 		t.until = minUntil
-		b.typing[chatID] = t
+		b.typing[key] = t
 		return
 	}
-	delete(b.typing, chatID)
+	delete(b.typing, key)
 }
 
-// ActiveTyping returns the unexpired chat action for chatID, if any.
-func (b *botEntry) ActiveTyping(chatID int64) (string, bool) {
+// ActiveTyping returns the unexpired chat actions of chatID, ordered by
+// topic.
+func (b *botEntry) ActiveTyping(chatID int64) []ChatAction {
+	now := time.Now()
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()
-	t, ok := b.typing[chatID]
-	if !ok {
-		return "", false
+	var out []ChatAction
+	for key, t := range b.typing {
+		if !now.Before(t.until) {
+			delete(b.typing, key)
+			continue
+		}
+		if key.chatID == chatID {
+			out = append(out, ChatAction{Thread: key.thread, Action: t.action})
+		}
 	}
-	if !time.Now().Before(t.until) {
-		delete(b.typing, chatID)
-		return "", false
-	}
-	return t.action, true
+	sort.Slice(out, func(i, j int) bool { return out[i].Thread < out[j].Thread })
+	return out
 }
 
 // ClearMessages drops all stored outbound messages for the bot.

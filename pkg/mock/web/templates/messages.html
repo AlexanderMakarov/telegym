@@ -89,6 +89,6 @@
   </div>
   {{end}}
 {{end}}
-{{if .ChatAction}}
-  <div class="msg bot chat-action" aria-live="polite">{{.ChatAction}}</div>
+{{range .ChatActions}}
+  <div class="msg bot chat-action" aria-live="polite">{{if .Topic}}<span class="topic-label">{{.Topic}}</span>{{end}}{{.Label}}</div>
 {{end}}
