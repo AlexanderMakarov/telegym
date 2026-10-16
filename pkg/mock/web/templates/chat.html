@@ -5,6 +5,12 @@
   <title>chat · {{.ChatID}} · telegym</title>
   <script src="/debug/chat/static/htmx.min.js"></script>
   <script src="/debug/chat/static/idiomorph-ext.min.js"></script>
+  <script>
+    // Rich message <details> blocks: keep the open/closed state the user
+    // chose instead of resetting it to the server's on every poll morph.
+    Idiomorph.defaults.callbacks.beforeAttributeUpdated = (attr, node) =>
+      !(attr === 'open' && node.tagName === 'DETAILS');
+  </script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; color: #1a1a1a; background: #efeef0; }
