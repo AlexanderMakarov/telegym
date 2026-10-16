@@ -238,7 +238,6 @@ func (b *botEntry) Webhook() (url, secret string) {
 // the bot edits message X and we store the new state as a separate
 // entry with the same MessageID but a higher EventSeq).
 func (b *botEntry) AppendMessage(m Message) {
-	b.ClearTyping(m.Chat.ID)
 	b.storeMessage(m)
 
 	if b.parent != nil && b.parent.Proxy != nil {
