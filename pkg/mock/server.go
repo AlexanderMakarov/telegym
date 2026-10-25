@@ -62,6 +62,7 @@ func New(cfg Config) *Server {
 		router:   router,
 	}
 	router.Use(metrics.ginMiddleware())
+	router.Use(s.requestJournalMiddleware())
 	s.registerRoutes()
 	return s
 }
@@ -148,6 +149,8 @@ func (s *Server) registerRoutes() {
 	s.router.POST("/debug/inject/update", s.handlers.DebugInjectUpdate)
 	s.router.GET("/debug/messages/:token", s.handlers.DebugListMessages)
 	s.router.POST("/debug/messages/:token/clear", s.handlers.DebugClearMessages)
+	s.router.GET("/debug/requests/:token", s.handlers.DebugListRequests)
+	s.router.POST("/debug/requests/:token/clear", s.handlers.DebugClearRequests)
 
 	// File storage (multipart uploads from bot, fetched by telegym-proxy)
 	s.router.GET("/debug/files", s.handlers.DebugListFiles)

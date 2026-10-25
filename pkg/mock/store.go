@@ -18,6 +18,7 @@ type Store struct {
 	bots          map[string]*botEntry
 	messageIDSeed atomic.Int64
 	updateIDSeed  atomic.Int64
+	requestIDSeed atomic.Int64
 
 	Files *FileStore     // multipart upload retention for media proxying
 	Proxy *proxyRegistry // outbound forward bindings for real-TG relay
@@ -62,6 +63,9 @@ type botEntry struct {
 	// Forum topics created via createForumTopic, per chat in creation order.
 	topicsMu sync.Mutex
 	topics   map[int64][]ForumTopic
+
+	requestMu sync.RWMutex
+	requests  []APIRequest
 
 	maxMessages int
 	maxInputs   int
