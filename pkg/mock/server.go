@@ -151,7 +151,9 @@ func (s *Server) registerRoutes() {
 
 	// File storage (multipart uploads from bot, fetched by telegym-proxy)
 	s.router.GET("/debug/files", s.handlers.DebugListFiles)
+	s.router.DELETE("/debug/files", s.handlers.DebugDeleteFiles)
 	s.router.GET("/debug/files/:file_id", s.handlers.DebugServeFile)
+	s.router.DELETE("/debug/files/:file_id", s.handlers.DebugDeleteFile)
 
 	// Proxy registration (telegym-proxy binds chat_ids → forward webhook)
 	s.router.POST("/debug/proxy/register", s.handlers.DebugProxyRegister)

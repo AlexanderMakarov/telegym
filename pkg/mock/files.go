@@ -2,6 +2,7 @@ package mock
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,33 @@ func (s *FileStore) Get(id string) (*storedFile, bool) {
 	defer s.mu.Unlock()
 	f, ok := s.files[id]
 	return f, ok
+}
+
+func (s *FileStore) delete(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, ok := s.files[id]
+	if !ok {
+		return false
+	}
+	delete(s.files, id)
+	s.totalSize -= int64(len(f.Bytes))
+	index := slices.Index(s.order, id)
+	s.order = slices.Delete(s.order, index, index+1)
+	return true
+}
+
+// clear releases all retained uploads without resetting capacity or file IDs.
+func (s *FileStore) clear() (int, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	count, bytes := len(s.files), s.totalSize
+	s.files = make(map[string]*storedFile)
+	s.order = nil
+	s.totalSize = 0
+	return count, bytes
 }
 
 // Stats reports current usage; used by /debug/files (no-arg) for visibility.
