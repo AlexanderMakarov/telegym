@@ -16,6 +16,7 @@ type Config struct {
 	MetricsListen     string // ":9104" - empty disables
 	DefaultWebhookURL string // fallback when bot never called setWebhook
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
+	FileStoreMaxBytes int64  // 0 uses the 100 MiB default
 	Quiet             bool   // suppress request logs (recommended for load runs)
 }
 
@@ -34,6 +35,9 @@ type Server struct {
 // in tests.
 func New(cfg Config) *Server {
 	store := NewStore()
+	if cfg.FileStoreMaxBytes > 0 {
+		store.Files.maxBytes = cfg.FileStoreMaxBytes
+	}
 	disp := NewWebhookDispatcher(cfg.DefaultWebhookURL)
 	h := &Handlers{Store: store, WebhookDispatcher: disp}
 

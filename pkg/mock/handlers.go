@@ -331,7 +331,7 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	fileID, err := h.captureUploadedFile(c, kind)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errUploadTooLarge) {
+		if errors.Is(err, errUploadTooLarge) || errors.Is(err, errFileStoreTooSmall) {
 			status = http.StatusRequestEntityTooLarge
 		}
 		errResp(c, status, "Bad Request: "+err.Error())
@@ -372,7 +372,10 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
 }
 
-var errUploadTooLarge = errors.New("uploaded file exceeds 50 MB")
+var (
+	errUploadTooLarge    = errors.New("uploaded file exceeds 50 MB")
+	errFileStoreTooSmall = errors.New("uploaded file exceeds file store capacity")
+)
 
 // captureUploadedFile stores the named multipart file and returns its file_id.
 // It returns an empty ID when no file was uploaded, or an error if capture fails.
@@ -394,12 +397,18 @@ func (h *Handlers) captureUploadedFile(c *gin.Context, fieldName string) (string
 	}
 	defer func() { _ = src.Close() }()
 	const maxFile = 50 * 1024 * 1024 // 50 MB per file
-	data, err := io.ReadAll(io.LimitReader(src, maxFile+1))
+	limit := min(int64(maxFile), h.Store.Files.maxBytes)
+	data, err := io.ReadAll(io.LimitReader(src, limit+1))
 	if err != nil {
 		return "", err
 	}
 	if len(data) > maxFile {
 		return "", errUploadTooLarge
+	}
+	// Reject before Put: an upload larger than capacity would evict the
+	// existing files and itself, leaving the client with an unusable ID.
+	if int64(len(data)) > h.Store.Files.maxBytes {
+		return "", errFileStoreTooSmall
 	}
 	ctype := fileHdr.Header.Get("Content-Type")
 	return h.Store.Files.Put(fieldName, ctype, fileHdr.Filename, data), nil

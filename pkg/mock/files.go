@@ -17,7 +17,7 @@ type FileStore struct {
 	files     map[string]*storedFile
 	order     []string // insertion order, oldest first
 	totalSize int64
-	maxBytes  int64
+	maxBytes  int64 // immutable after server initialization
 	idSeed    atomic.Int64
 }
 
