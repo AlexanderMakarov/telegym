@@ -18,7 +18,7 @@ type Config struct {
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
 	Quiet             bool   // suppress request logs (recommended for load runs)
 	// MaxMessagesPerChat caps the outbound history kept per chat; zero
-	// keeps the default (500).
+	// keeps DefaultMaxMessagesPerChat.
 	MaxMessagesPerChat int
 }
 

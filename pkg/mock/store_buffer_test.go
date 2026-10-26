@@ -35,7 +35,7 @@ func BenchmarkSendMessageFullStore(b *testing.B) {
 	srv := New(Config{Quiet: true})
 	h := srv.Handler()
 	bot := srv.handlers.Store.Bot("741:bench-full")
-	for i := range defaultMaxMessagesPerChat {
+	for i := range DefaultMaxMessagesPerChat {
 		bot.AppendMessage(Message{MessageID: i + 1, Chat: Chat{ID: 42}})
 	}
 	b.ReportAllocs()

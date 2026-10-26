@@ -56,7 +56,7 @@ func TestChatLogOrderedByEventSeq(t *testing.T) {
 	}
 	wg.Wait()
 	msgs := b.MessagesSince(7, 0)
-	if len(msgs) != 500 { // capped at defaultMaxMessagesPerChat
+	if len(msgs) != DefaultMaxMessagesPerChat {
 		t.Fatalf("got %d messages", len(msgs))
 	}
 	for i := 1; i < len(msgs); i++ {
@@ -69,13 +69,13 @@ func TestChatLogOrderedByEventSeq(t *testing.T) {
 func TestBusyChatDoesNotEvictOthers(t *testing.T) {
 	b := NewStore().Bot("741:isolation")
 	b.AppendMessage(Message{MessageID: b.NextMessageID(1), Chat: Chat{ID: 1}, Text: "quiet"})
-	for range 10 * defaultMaxMessagesPerChat {
+	for range 10 * DefaultMaxMessagesPerChat {
 		b.AppendMessage(Message{MessageID: b.NextMessageID(2), Chat: Chat{ID: 2}})
 	}
 	if msgs := b.Messages(1, 10); len(msgs) != 1 || msgs[0].Text != "quiet" {
 		t.Fatalf("busy chat evicted another chat's history: %+v", msgs)
 	}
-	if msgs, chats := b.messageStats(); msgs != 1+defaultMaxMessagesPerChat || chats != 2 {
+	if msgs, chats := b.messageStats(); msgs != 1+DefaultMaxMessagesPerChat || chats != 2 {
 		t.Fatalf("stats: messages=%d chats=%d", msgs, chats)
 	}
 }
@@ -115,5 +115,26 @@ func TestClearMessagesKeepsIDSequence(t *testing.T) {
 	}
 	if next := b.NextMessageID(1); next != last+1 {
 		t.Fatalf("message_id restarted after clear: %d, want %d", next, last+1)
+	}
+}
+
+func TestToastQueueCapped(t *testing.T) {
+	b := NewStore().Bot("741:toasts")
+	for i := range 3 * maxToastsPerChat {
+		b.PushToast(1, Toast{Text: string(rune('a' + i%26)), At: int64(i)})
+	}
+	first, ok := b.PopToast(1)
+	if !ok || first.At != 2*maxToastsPerChat {
+		t.Fatalf("oldest kept toast %+v, want At=%d", first, 2*maxToastsPerChat)
+	}
+	n := 1
+	for {
+		if _, ok := b.PopToast(1); !ok {
+			break
+		}
+		n++
+	}
+	if n != maxToastsPerChat {
+		t.Fatalf("kept %d toasts, want %d", n, maxToastsPerChat)
 	}
 }

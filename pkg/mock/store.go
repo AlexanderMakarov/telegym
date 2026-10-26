@@ -110,8 +110,15 @@ type UserInput struct {
 	Seq    int    `json:"seq"`
 }
 
-// defaultMaxMessagesPerChat bounds memory to roughly chats x 500 messages.
-const defaultMaxMessagesPerChat = 500
+// DefaultMaxMessagesPerChat is the default outbound history kept per chat.
+// Pollers read every 25-250ms, so a few hundred is plenty, and memory stays
+// bounded on long runs: the buffer peaks at 2x the cap before trimming, so
+// 1000 chats with keyboards stay around 0.5 GB.
+const DefaultMaxMessagesPerChat = 200
+
+// maxToastsPerChat bounds callback answers awaiting the debug chat. Only the
+// browser UI drains them, so under k6 they would otherwise grow all run.
+const maxToastsPerChat = 20
 
 // NewStore returns an initialized Store.
 func NewStore() *Store {
@@ -120,7 +127,7 @@ func NewStore() *Store {
 		bots:               make(map[string]*botEntry),
 		Files:              NewFileStore(),
 		Proxy:              newProxyRegistry(),
-		MaxMessagesPerChat: defaultMaxMessagesPerChat,
+		MaxMessagesPerChat: DefaultMaxMessagesPerChat,
 		// Telegram numbers messages per chat and keeps message_id within
 		// int32; bots commonly store it in 32-bit columns. Each chat counts
 		// from a base below 1e9 that changes between mock restarts, so IDs
@@ -512,7 +519,11 @@ func (b *botEntry) PushToast(chatID int64, t Toast) {
 	if b.toasts == nil {
 		b.toasts = map[int64][]Toast{}
 	}
-	b.toasts[chatID] = append(b.toasts[chatID], t)
+	q := append(b.toasts[chatID], t)
+	if over := len(q) - maxToastsPerChat; over > 0 {
+		q = append(q[:0:0], q[over:]...) // drop the oldest, release the old array
+	}
+	b.toasts[chatID] = q
 }
 
 // PopToast returns and removes the oldest pending toast for a chat.
