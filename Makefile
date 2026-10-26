@@ -1,4 +1,4 @@
-.PHONY: help init build build-examples run test lint preflight clean \
+.PHONY: help init build build-examples run test lint check-deps preflight clean \
         refresh-spec refresh-web-deps \
         mock-up mock-down \
         proxy-up proxy-down \
@@ -59,12 +59,18 @@ test: ## Run unit tests (both root module and pkg/xk6)
 	go test -v ./...
 	cd pkg/xk6 && go test -v ./...
 
-lint: ## Run linters
+check-deps: ## Check module tidiness and workspace checksums
+	go mod tidy -diff
+	cd pkg/xk6 && go mod tidy -diff
+	go list -m all > /dev/null
+	git diff --exit-code -- go.work.sum
+
+lint: check-deps ## Run linters
 	go vet ./...
 	cd pkg/xk6 && go vet ./...
 	gofmt -l -s . | tee /dev/stderr | (! read)
 
-preflight: ## Full local validation - mirrors CI. Run before pushing.
+preflight: check-deps ## Full local validation - mirrors CI. Run before pushing.
 	@echo "=== gofmt ==="
 	@test -z "$$(gofmt -l -s . | tee /dev/stderr)" || { echo "gofmt failed - run 'gofmt -s -w .'"; exit 1; }
 	@echo "=== go vet (root module) ==="
