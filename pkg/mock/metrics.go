@@ -23,6 +23,7 @@ type Metrics struct {
 	RequestDuration         *prometheus.HistogramVec
 	WebhookDispatchTotal    *prometheus.CounterVec
 	WebhookDispatchDuration prometheus.Histogram
+	UpdatesEvictedTotal     prometheus.Counter
 	ProxyForwardsTotal      *prometheus.CounterVec
 	ProxyBindings           prometheus.Gauge
 }
@@ -58,13 +59,19 @@ func NewMetrics(store *Store) *Metrics {
 				Name: "telegym_mock_webhook_dispatches_total",
 				Help: "Update dispatches to the bot-under-test webhook or polling queue.",
 			},
-			[]string{"result"}, // "ok" | "fail" | "queued"
+			[]string{"result"}, // "ok" | "fail" | "queued" | "no_url"
 		),
 		WebhookDispatchDuration: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "telegym_mock_webhook_dispatch_duration_seconds",
 				Help:    "Latency of webhook delivery to the bot-under-test.",
 				Buckets: prometheus.ExponentialBuckets(0.001, 2, 12),
+			},
+		),
+		UpdatesEvictedTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "telegym_mock_updates_evicted_total",
+				Help: "Unconfirmed polling updates dropped because the per-bot queue was full.",
 			},
 		),
 		ProxyForwardsTotal: prometheus.NewCounterVec(
@@ -87,6 +94,7 @@ func NewMetrics(store *Store) *Metrics {
 		m.RequestDuration,
 		m.WebhookDispatchTotal,
 		m.WebhookDispatchDuration,
+		m.UpdatesEvictedTotal,
 		m.ProxyForwardsTotal,
 		m.ProxyBindings,
 	)

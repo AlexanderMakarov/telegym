@@ -424,7 +424,6 @@ func (h *chatHandlers) send(c *gin.Context) {
 	bot.AppendInput(UserInput{ChatID: chatID, Text: text, Date: time.Now().Unix(), Name: name})
 
 	upd := Update{
-		UpdateID: h.store.NextUpdateID(),
 		Message: &Message{
 			MessageID: h.store.NextMessageID(),
 			From:      &User{ID: chatID, FirstName: name, Username: name},
@@ -433,7 +432,7 @@ func (h *chatHandlers) send(c *gin.Context) {
 			Text:      text,
 		},
 	}
-	if _, err := h.dispatcher.Deliver(c.Request.Context(), bot, upd); err != nil {
+	if _, err := h.dispatcher.DeliverUpdate(c.Request.Context(), bot, upd); err != nil {
 		c.String(http.StatusBadGateway, "deliver: %v", err)
 		return
 	}
@@ -471,7 +470,6 @@ func (h *chatHandlers) click(c *gin.Context) {
 	cbID := strconv.FormatInt(time.Now().UnixNano(), 10)
 	bot.RegisterCallback(cbID, chatID)
 	upd := Update{
-		UpdateID: h.store.NextUpdateID(),
 		CallbackQuery: &CallbackQuery{
 			ID:           cbID,
 			From:         from,
@@ -485,7 +483,7 @@ func (h *chatHandlers) click(c *gin.Context) {
 			},
 		},
 	}
-	if _, err := h.dispatcher.Deliver(c.Request.Context(), bot, upd); err != nil {
+	if _, err := h.dispatcher.DeliverUpdate(c.Request.Context(), bot, upd); err != nil {
 		c.String(http.StatusBadGateway, "deliver: %v", err)
 		return
 	}

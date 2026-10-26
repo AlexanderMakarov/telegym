@@ -31,6 +31,9 @@ func TestInjectUpdateDispatchObservability(t *testing.T) {
 			}
 
 			srv := New(cfg)
+			if !webhook {
+				startPolling(t, srv, "889:inject")
+			}
 			rec := pollingRequest(srv, http.MethodPost, "/debug/inject/update", `{"token":"889:inject","chat_id":42,"text":"hello"}`)
 			var response struct {
 				OK             bool  `json:"ok"`

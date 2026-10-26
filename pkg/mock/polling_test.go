@@ -36,6 +36,17 @@ func decodeUpdates(t *testing.T, rec *httptest.ResponseRecorder) []Update {
 	return response.Result
 }
 
+// startPolling switches bots to getUpdates the way polling clients do.
+func startPolling(t *testing.T, srv *Server, tokens ...string) {
+	t.Helper()
+	for _, token := range tokens {
+		rec := pollingRequest(srv, http.MethodPost, "/bot"+token+"/deleteWebhook", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("deleteWebhook status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func queueText(t *testing.T, srv *Server, token, text string) {
 	t.Helper()
 	body := fmt.Sprintf(`{"token":%q,"chat_id":42,"text":%q}`, token, text)
@@ -49,6 +60,7 @@ func TestPollingOffsetsAndIsolation(t *testing.T) {
 	for _, prefix := range []string{"/bot888:poll", "/bot888:poll/test"} {
 		t.Run(prefix, func(t *testing.T) {
 			srv := New(Config{Quiet: true})
+			startPolling(t, srv, "888:poll", "999:other")
 			queueText(t, srv, "888:poll", "first")
 			queueText(t, srv, "888:poll", "second")
 			queueText(t, srv, "999:other", "other bot")
@@ -121,6 +133,7 @@ func TestWebhookOptionalJSONBody(t *testing.T) {
 		} {
 			t.Run(method+"/"+body.name, func(t *testing.T) {
 				srv := New(Config{Quiet: true})
+				startPolling(t, srv, "888:poll")
 				queueText(t, srv, "888:poll", "pending")
 				const webhookURL = "https://example.com/webhook"
 				rec := pollingRequest(srv, http.MethodPost, "/bot888:poll/setWebhook", `{"url":"`+webhookURL+`"}`)
@@ -239,6 +252,7 @@ func TestPollingWebhookLifecycle(t *testing.T) {
 
 func TestPollingWaitsForUpdateAndCancels(t *testing.T) {
 	srv := New(Config{Quiet: true})
+	startPolling(t, srv, "888:poll", "999:other")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/bot888:poll/getUpdates?timeout=30", nil).WithContext(ctx)
@@ -279,11 +293,6 @@ func TestPollingWaitsForUpdateAndCancels(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	// Only one poll may wait for updates for a given bot.
-	rec := pollingRequest(srv, http.MethodGet, "/bot999:other/getUpdates", "")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("concurrent poll status=%d body=%s, want 409", rec.Code, rec.Body.String())
-	}
 	cancel()
 	select {
 	case rec := <-done:
@@ -309,6 +318,7 @@ func TestPollingTimeout(t *testing.T) {
 
 func TestPollingDebugChat(t *testing.T) {
 	srv := New(Config{Quiet: true})
+	startPolling(t, srv, "888:poll")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/chat/888:poll/42/send", strings.NewReader("text=hello&name=Alice"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -331,6 +341,7 @@ func TestPollingDebugChat(t *testing.T) {
 
 func TestPollingQueueRetention(t *testing.T) {
 	srv := New(Config{Quiet: true})
+	startPolling(t, srv, "888:poll")
 	// Exceed the queue capacity by one; the oldest update should be discarded.
 	for i := 0; i <= 5000; i++ {
 		queueText(t, srv, "888:poll", fmt.Sprint(i))
@@ -350,5 +361,12 @@ func TestPollingQueueRetention(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK || info.Result.URL != "" || info.Result.PendingUpdateCount != 5000 {
 		t.Fatalf("unexpected pending queue info: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Eviction is visible in metrics instead of happening silently.
+	rec = httptest.NewRecorder()
+	srv.metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), "telegym_mock_updates_evicted_total 1") {
+		t.Fatalf("eviction not counted: %s", rec.Body.String())
 	}
 }

@@ -3,35 +3,113 @@ package mock
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// updateQueue retains the latest 5000 unconfirmed updates per bot.
-// Closing notify wakes a waiting poll when an update arrives.
+// updateQueue retains the latest maxPendingUpdates unconfirmed updates per bot.
+// Closing notify wakes waiting polls when an update arrives.
 type updateQueue struct {
-	pollMu  sync.Mutex
 	mu      sync.Mutex
 	updates []Update
 	notify  chan struct{}
+
+	// pollCancel terminates the active getUpdates request; pollSeq tells a
+	// finishing request whether it still owns the slot.
+	pollCancel context.CancelCauseFunc
+	pollSeq    uint64
+
+	// polling is set once the bot opts into getUpdates (by calling it or
+	// deleteWebhook). Until then updates without a webhook fail fast instead
+	// of piling up in a queue nobody reads.
+	polling atomic.Bool
 }
 
 const maxPendingUpdates = 5000
+
+// pollConflict is a 409 description copied verbatim from the Bot API.
+type pollConflict string
+
+func (e pollConflict) Error() string { return string(e) }
+
+const (
+	errPollTerminated pollConflict = "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"
+	errPollWebhookSet pollConflict = "Conflict: terminated by setWebhook request"
+	errPollWebhook    pollConflict = "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first"
+)
 
 func newUpdateQueue() *updateQueue {
 	return &updateQueue{notify: make(chan struct{})}
 }
 
-func (q *updateQueue) Enqueue(upd Update) {
+// Enqueue assigns the update ID via nextID and appends the update under the
+// queue lock, so IDs in the queue are strictly increasing. Assigning IDs
+// before taking the lock would let concurrent injectors enqueue [7, 6]; a
+// confirmation with offset=8 would then silently drop 6.
+// It returns the update as queued and whether the oldest update was evicted.
+func (q *updateQueue) Enqueue(upd Update, nextID func() int64) (Update, bool) {
 	q.mu.Lock()
+	defer q.mu.Unlock()
+	upd.UpdateID = nextID()
 	q.updates = append(q.updates, upd)
-	if over := len(q.updates) - maxPendingUpdates; over > 0 {
-		copy(q.updates, q.updates[over:])
-		q.updates = q.updates[:maxPendingUpdates]
+	evicted := false
+	if len(q.updates) > maxPendingUpdates {
+		// Re-slicing is O(1); append reallocates (and compacts) the backing
+		// array only when capacity runs out, which keeps eviction amortized
+		// O(1) instead of a 5000-element memmove on every enqueue.
+		q.updates[0] = Update{}
+		q.updates = q.updates[1:]
+		evicted = true
 	}
 	close(q.notify)
 	q.notify = make(chan struct{})
-	q.mu.Unlock()
+	return upd, evicted
 }
+
+// BeginPoll registers a new getUpdates request, terminating the previous one
+// the way Telegram does: the newest request wins. The returned context is
+// canceled with errPollTerminated or errPollWebhookSet when the request is
+// superseded; release must be called when the request finishes.
+func (q *updateQueue) BeginPoll(parent context.Context) (ctx context.Context, release func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	q.polling.Store(true)
+
+	q.mu.Lock()
+	prev := q.pollCancel
+	q.pollSeq++
+	seq := q.pollSeq
+	q.pollCancel = cancel
+	q.mu.Unlock()
+
+	if prev != nil {
+		prev(errPollTerminated)
+	}
+	return ctx, func() {
+		q.mu.Lock()
+		if q.pollSeq == seq {
+			q.pollCancel = nil
+		}
+		q.mu.Unlock()
+		cancel(nil)
+	}
+}
+
+// TerminatePoll ends the active getUpdates request, if any, with cause.
+func (q *updateQueue) TerminatePoll(cause error) {
+	q.mu.Lock()
+	cancel := q.pollCancel
+	q.pollCancel = nil
+	q.mu.Unlock()
+	if cancel != nil {
+		cancel(cause)
+	}
+}
+
+// OptIn marks the bot as a polling client (see updateQueue.polling).
+func (q *updateQueue) OptIn() { q.polling.Store(true) }
+
+// Polling reports whether the bot opted into getUpdates.
+func (q *updateQueue) Polling() bool { return q.polling.Load() }
 
 func (q *updateQueue) Poll(ctx context.Context, offset int64, limit int, timeout time.Duration) []Update {
 	if limit <= 0 || limit > 100 {

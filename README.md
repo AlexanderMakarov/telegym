@@ -85,7 +85,8 @@ For your own bot, point it at the mock and either click around manually or run a
 # 1. Start the mock (separate terminal, or `make mock-up` to background it)
 ./bin/telegym-mock
 
-# 2. Run your bot against the mock. It calls setWebhook itself on startup.
+# 2. Run your bot against the mock (webhook bots call setWebhook on startup,
+#    polling bots call deleteWebhook/getUpdates - both work).
 export TELEGRAM_API_URL=http://localhost:5678
 export TELEGRAM_TOKEN=1234567890:telegym_default_mock_token_xxxxxxxx
 ./your-bot
@@ -223,6 +224,26 @@ breaks down in two layers:
   `getChat → Chat`, `forwardMessage → Message`, `copyMessage → MessageId`,
   `createChatInviteLink → ChatInviteLink`, `getStickerSet → StickerSet`, etc.
   all parse cleanly in any Bot API client.
+
+### Webhook vs polling
+
+Updates injected via `/debug/inject/update` (or the debug chat) are delivered
+the same way Telegram does it:
+
+- **Webhook** - after `setWebhook` (or with `TELEGYM_MOCK_DEFAULT_WEBHOOK`)
+  every update is POSTed to the bot, with `X-Telegram-Bot-Api-Secret-Token`
+  when a secret was set.
+- **Polling** - once the bot calls `deleteWebhook` or `getUpdates`, updates go
+  to a per-bot queue (latest 5000 unconfirmed; overflow is counted in
+  `telegym_mock_updates_evicted_total`). `offset`, `limit`, `timeout` long
+  polling and `drop_pending_updates` behave like the Bot API, and so do the
+  409 conflicts: a newer `getUpdates` terminates the previous one, and
+  `setWebhook` terminates an active poll.
+- **Neither** - injection fails fast with 502 (`no_url` in
+  `telegym_mock_webhook_dispatches_total`) instead of queueing updates nobody
+  reads, so a misconfigured webhook shows up immediately in k6 scenarios.
+
+`allowed_updates` is accepted but not applied.
 
 Refresh the spec when Telegram releases a new Bot API version:
 

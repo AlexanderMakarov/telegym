@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,12 +28,19 @@ func errResp(c *gin.Context, code int, desc string) {
 	c.JSON(code, APIResponse{OK: false, ErrorCode: code, Description: desc})
 }
 
-// readBody returns either parsed JSON body or, for multipart requests, a
-// map of form fields. The handler decides which keys it cares about.
+// readBody returns either parsed JSON body or, for multipart and urlencoded
+// requests, a map of form fields. The handler decides which keys it cares about.
 func readBody(c *gin.Context) (map[string]any, error) {
 	ct := c.GetHeader("Content-Type")
-	if strings.HasPrefix(ct, "multipart/form-data") {
-		if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+	multipart := strings.HasPrefix(ct, "multipart/form-data")
+	if multipart || strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
+		var err error
+		if multipart {
+			err = c.Request.ParseMultipartForm(32 << 20)
+		} else {
+			err = c.Request.ParseForm()
+		}
+		if err != nil {
 			return nil, err
 		}
 		out := make(map[string]any, len(c.Request.PostForm))
@@ -157,26 +165,34 @@ func fakeFileID(kind string) string {
 
 func (h *Handlers) GetUpdates(c *gin.Context, bot *botEntry) {
 	if h.UpdateDispatcher.hasTarget(bot) {
-		errResp(c, http.StatusConflict, "Conflict: can't use getUpdates method while webhook is active")
+		errResp(c, http.StatusConflict, errPollWebhook.Error())
 		return
 	}
-	if !bot.updates.pollMu.TryLock() {
-		errResp(c, http.StatusConflict, "Conflict: another getUpdates request is active")
-		return
-	}
-	defer bot.updates.pollMu.Unlock()
-
-	var req struct {
-		Offset  int64 `json:"offset" form:"offset"`
-		Limit   int   `json:"limit" form:"limit"`
-		Timeout int   `json:"timeout" form:"timeout"`
-	}
-	if err := c.ShouldBind(&req); err != nil {
+	// Same tolerant parsing as other methods: empty body, query/form fields,
+	// and string-encoded numbers are all accepted by Telegram.
+	body, err := readBody(c)
+	if err != nil {
 		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
 		return
 	}
-	timeout := time.Duration(max(0, req.Timeout)) * time.Second
-	updates := bot.updates.Poll(c.Request.Context(), req.Offset, req.Limit, timeout)
+	param := func(key string) any {
+		if v, ok := body[key]; ok {
+			return v
+		}
+		return c.Query(key)
+	}
+
+	// The newest request wins: a previous long poll is terminated with 409.
+	ctx, release := bot.updates.BeginPoll(c.Request.Context())
+	defer release()
+
+	timeout := time.Duration(max(0, toInt(param("timeout")))) * time.Second
+	updates := bot.updates.Poll(ctx, toInt64(param("offset")), toInt(param("limit")), timeout)
+	var conflict pollConflict
+	if errors.As(context.Cause(ctx), &conflict) {
+		errResp(c, http.StatusConflict, conflict.Error())
+		return
+	}
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: updates})
 }
 
@@ -492,6 +508,12 @@ func (h *Handlers) SetWebhook(c *gin.Context, bot *botEntry) {
 		bot.updates.Clear()
 	}
 	bot.SetWebhook(req.URL, req.SecretToken)
+	if req.URL != "" {
+		// Telegram ends an active long poll once a webhook is registered.
+		bot.updates.TerminatePoll(errPollWebhookSet)
+	} else {
+		bot.updates.OptIn()
+	}
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
@@ -505,6 +527,8 @@ func (h *Handlers) DeleteWebhook(c *gin.Context, bot *botEntry) {
 		bot.updates.Clear()
 	}
 	bot.SetWebhook("", "")
+	// Bots call deleteWebhook before switching to getUpdates.
+	bot.updates.OptIn()
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
