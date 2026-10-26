@@ -147,7 +147,7 @@ func parseEntities(v any) []Entity {
 func (h *Handlers) newBotMessage(bot *botEntry, chatID int64) Message {
 	return Message{
 		isNew:     true,
-		MessageID: h.Store.NextMessageID(),
+		MessageID: bot.NextMessageID(chatID),
 		From:      &bot.identity,
 		Date:      time.Now().Unix(),
 		Chat:      Chat{ID: chatID, Type: "private"},

@@ -99,7 +99,7 @@ func (h *Handlers) DebugInjectUpdate(c *gin.Context) {
 		}
 		messageID := req.MessageID
 		if req.Type == "message" || messageID == 0 {
-			messageID = h.Store.NextMessageID()
+			messageID = bot.NextMessageID(chat.ID)
 		}
 		message := &Message{
 			MessageID: messageID,

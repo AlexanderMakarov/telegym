@@ -115,6 +115,21 @@ The complete reference (grouped by binary, with comments on each variable)
 lives in [`.env.example`](.env.example). `make init` copies it to `.env`
 if you want a persistent local config.
 
+### Message IDs and history
+
+- `message_id` is numbered per chat, as in Telegram, and stays within int32
+  (bots often store it in 32-bit columns). Bot replies, user messages and
+  forum topic service messages share a chat's sequence; each mock restart
+  starts from a new base below 1e9, so IDs rarely repeat across restarts.
+- `_event_seq` (mock-internal, int64) orders every stored event, edits
+  included. Scenarios dedupe by it; within a chat it is always increasing.
+- Outbound history is kept per chat (`TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT`,
+  default 200): a busy chat never evicts another chat's replies, and polling
+  `/debug/messages?chat_id=` scans only that chat, so thousands of VUs don't
+  slow each other down. Memory peaks at roughly chats x 2 x the cap x
+  1-2 KB per message (about 0.5 GB for 1000 chats at 200); lower the cap for
+  hour-long runs with many users.
+
 ## Repo layout
 
 ```
