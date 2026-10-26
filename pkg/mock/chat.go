@@ -425,7 +425,7 @@ func (h *chatHandlers) send(c *gin.Context) {
 
 	upd := Update{
 		Message: &Message{
-			MessageID: h.store.NextMessageID(),
+			MessageID: bot.NextMessageID(chatID),
 			From:      &User{ID: chatID, FirstName: name, Username: name},
 			Date:      time.Now().Unix(),
 			Chat:      Chat{ID: chatID, Type: "private", FirstName: name, Username: name},

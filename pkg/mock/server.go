@@ -17,6 +17,9 @@ type Config struct {
 	DefaultWebhookURL string // fallback when bot never called setWebhook
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
 	Quiet             bool   // suppress request logs (recommended for load runs)
+	// MaxMessagesPerChat caps the outbound history kept per chat; zero
+	// keeps the default (500).
+	MaxMessagesPerChat int
 }
 
 // Server is the Bot API mock HTTP server.
@@ -34,6 +37,9 @@ type Server struct {
 // in tests.
 func New(cfg Config) *Server {
 	store := NewStore()
+	if cfg.MaxMessagesPerChat > 0 {
+		store.MaxMessagesPerChat = cfg.MaxMessagesPerChat
+	}
 	disp := NewUpdateDispatcher(cfg.DefaultWebhookURL)
 	h := &Handlers{Store: store, UpdateDispatcher: disp}
 

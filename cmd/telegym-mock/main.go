@@ -6,6 +6,7 @@
 //	-metrics-listen,   TELEGYM_MOCK_METRICS_LISTEN      ":9104"  (empty=disabled)
 //	-default-webhook,  TELEGYM_MOCK_DEFAULT_WEBHOOK     ""  (use per-bot setWebhook)
 //	-quiet,            TELEGYM_MOCK_QUIET               false
+//	-max-messages-per-chat, TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT  500
 //	-banner                                             print ASCII banner with ANSI colors and exit
 package main
 
@@ -14,6 +15,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/kolomiichenko/telegym/pkg/mock"
 )
@@ -32,6 +34,15 @@ func envBool(key string, fallback bool) bool {
 	return fallback
 }
 
+func envInt(key string, fallback int) int {
+	if v, ok := os.LookupEnv(key); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
 func main() {
 	cfg := mock.Config{}
 
@@ -40,6 +51,7 @@ func main() {
 	flag.StringVar(&cfg.MetricsListen, "metrics-listen", envOr("TELEGYM_MOCK_METRICS_LISTEN", ":9104"), "Prometheus metrics listen address (empty=disabled)")
 	flag.StringVar(&cfg.DefaultWebhookURL, "default-webhook", envOr("TELEGYM_MOCK_DEFAULT_WEBHOOK", ""), "Fallback webhook URL when a bot has not called setWebhook")
 	flag.BoolVar(&cfg.Quiet, "quiet", envBool("TELEGYM_MOCK_QUIET", false), "Suppress per-request logs")
+	flag.IntVar(&cfg.MaxMessagesPerChat, "max-messages-per-chat", envInt("TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT", 500), "Outbound messages kept per chat")
 	flag.BoolVar(&bannerOnly, "banner", false, "Print the ASCII banner with raw ANSI colors to stdout and exit (for `freeze` and similar renderers)")
 	flag.Parse()
 
