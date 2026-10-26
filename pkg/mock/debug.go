@@ -11,7 +11,7 @@ import (
 // DebugAPI exposes endpoints used by the xk6 extension (and humans via curl)
 // to drive the bot: inject Updates and inspect what the bot has sent.
 
-// InjectUpdateRequest describes a synthetic Update delivered to the bot's webhook.
+// InjectUpdateRequest describes a synthetic Update delivered by webhook or polling.
 type InjectUpdateRequest struct {
 	Token string `json:"token" binding:"required"`
 
@@ -71,7 +71,7 @@ func (h *Handlers) DebugInjectUpdate(c *gin.Context) {
 
 	from := User{ID: req.UserID, IsBot: false, FirstName: req.FirstName, Username: req.Username}
 	chat := Chat{ID: req.ChatID, Type: req.ChatType, Title: req.ChatTitle}
-	upd := Update{UpdateID: h.Store.NextUpdateID()}
+	var upd Update // UpdateID is assigned on delivery
 
 	switch req.Type {
 	case "callback_query":
@@ -134,20 +134,21 @@ func (h *Handlers) DebugInjectUpdate(c *gin.Context) {
 		return
 	}
 
-	status, err := h.WebhookDispatcher.Deliver(c.Request.Context(), bot, upd)
+	res, err := h.UpdateDispatcher.DeliverUpdate(c.Request.Context(), bot, upd)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"ok":              false,
-			"update_id":       upd.UpdateID,
-			"delivery_status": status,
+			"update_id":       res.UpdateID,
+			"delivery_status": res.Status,
 			"error":           err.Error(),
 		})
 		return
 	}
 	resp := gin.H{
 		"ok":              true,
-		"update_id":       upd.UpdateID,
-		"delivery_status": status,
+		"update_id":       res.UpdateID,
+		"delivery_status": res.Status,
+		"queued":          res.Queued,
 	}
 	if upd.CallbackQuery != nil {
 		resp["callback_query_id"] = upd.CallbackQuery.ID
