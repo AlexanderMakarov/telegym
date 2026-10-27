@@ -16,6 +16,7 @@ type Config struct {
 	MetricsListen     string // ":9104" - empty disables
 	DefaultWebhookURL string // fallback when bot never called setWebhook
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
+	FileStoreMaxBytes int64  // 0 uses the 100 MiB default
 	Quiet             bool   // suppress request logs (recommended for load runs)
 	// MaxMessagesPerChat caps the outbound history kept per chat; zero
 	// keeps DefaultMaxMessagesPerChat.
@@ -39,6 +40,9 @@ func New(cfg Config) *Server {
 	store := NewStore()
 	if cfg.MaxMessagesPerChat > 0 {
 		store.MaxMessagesPerChat = cfg.MaxMessagesPerChat
+	}
+	if cfg.FileStoreMaxBytes > 0 {
+		store.Files.maxBytes = cfg.FileStoreMaxBytes
 	}
 	disp := NewUpdateDispatcher(cfg.DefaultWebhookURL)
 	h := &Handlers{Store: store, UpdateDispatcher: disp}
