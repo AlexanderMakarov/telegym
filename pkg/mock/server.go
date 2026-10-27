@@ -18,6 +18,9 @@ type Config struct {
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
 	FileStoreMaxBytes int64  // 0 uses the 100 MiB default
 	Quiet             bool   // suppress request logs (recommended for load runs)
+	// MaxMessagesPerChat caps the outbound history kept per chat; zero
+	// keeps DefaultMaxMessagesPerChat.
+	MaxMessagesPerChat int
 }
 
 // Server is the Bot API mock HTTP server.
@@ -35,11 +38,14 @@ type Server struct {
 // in tests.
 func New(cfg Config) *Server {
 	store := NewStore()
+	if cfg.MaxMessagesPerChat > 0 {
+		store.MaxMessagesPerChat = cfg.MaxMessagesPerChat
+	}
 	if cfg.FileStoreMaxBytes > 0 {
 		store.Files.maxBytes = cfg.FileStoreMaxBytes
 	}
-	disp := NewWebhookDispatcher(cfg.DefaultWebhookURL)
-	h := &Handlers{Store: store, WebhookDispatcher: disp}
+	disp := NewUpdateDispatcher(cfg.DefaultWebhookURL)
+	h := &Handlers{Store: store, UpdateDispatcher: disp}
 
 	if !cfg.Quiet {
 		gin.SetMode(gin.DebugMode)
@@ -216,6 +222,10 @@ func parseBotPath(p string) (token, method string, ok bool) {
 }
 
 func (s *Server) registerBotAPI(g *gin.RouterGroup) {
+	// Long polling
+	g.GET("/getUpdates", s.withBot(s.handlers.GetUpdates))
+	g.POST("/getUpdates", s.withBot(s.handlers.GetUpdates))
+
 	// Methods that return Message (or Update side-effect)
 	g.POST("/sendMessage", s.withBot(s.handlers.SendMessage))
 	g.POST("/sendRichMessage", s.withBot(s.handlers.SendRichMessage))

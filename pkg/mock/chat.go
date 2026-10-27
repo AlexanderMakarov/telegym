@@ -46,13 +46,13 @@ var chatTemplates = template.Must(
 )
 
 // chatHandlers holds dependencies the UI needs (store for messages,
-// dispatcher for delivering injected updates to the bot's webhook).
+// dispatcher for delivering injected updates).
 type chatHandlers struct {
 	store      *Store
-	dispatcher *WebhookDispatcher
+	dispatcher *UpdateDispatcher
 }
 
-func newChatHandlers(s *Store, d *WebhookDispatcher) *chatHandlers {
+func newChatHandlers(s *Store, d *UpdateDispatcher) *chatHandlers {
 	return &chatHandlers{store: s, dispatcher: d}
 }
 
@@ -424,16 +424,15 @@ func (h *chatHandlers) send(c *gin.Context) {
 	bot.AppendInput(UserInput{ChatID: chatID, Text: text, Date: time.Now().Unix(), Name: name})
 
 	upd := Update{
-		UpdateID: h.store.NextUpdateID(),
 		Message: &Message{
-			MessageID: h.store.NextMessageID(),
+			MessageID: bot.NextMessageID(chatID),
 			From:      &User{ID: chatID, FirstName: name, Username: name},
 			Date:      time.Now().Unix(),
 			Chat:      Chat{ID: chatID, Type: "private", FirstName: name, Username: name},
 			Text:      text,
 		},
 	}
-	if _, err := h.dispatcher.Deliver(c.Request.Context(), bot, upd); err != nil {
+	if _, err := h.dispatcher.DeliverUpdate(c.Request.Context(), bot, upd); err != nil {
 		c.String(http.StatusBadGateway, "deliver: %v", err)
 		return
 	}
@@ -471,7 +470,6 @@ func (h *chatHandlers) click(c *gin.Context) {
 	cbID := strconv.FormatInt(time.Now().UnixNano(), 10)
 	bot.RegisterCallback(cbID, chatID)
 	upd := Update{
-		UpdateID: h.store.NextUpdateID(),
 		CallbackQuery: &CallbackQuery{
 			ID:           cbID,
 			From:         from,
@@ -485,7 +483,7 @@ func (h *chatHandlers) click(c *gin.Context) {
 			},
 		},
 	}
-	if _, err := h.dispatcher.Deliver(c.Request.Context(), bot, upd); err != nil {
+	if _, err := h.dispatcher.DeliverUpdate(c.Request.Context(), bot, upd); err != nil {
 		c.String(http.StatusBadGateway, "deliver: %v", err)
 		return
 	}

@@ -24,18 +24,18 @@ func TestMessageBufferKeepsNewest(t *testing.T) {
 	if in := b.Inputs(42); len(in) != 10 || in[0].Text != "26" || in[9].Text != "35" {
 		t.Fatalf("Inputs must return the newest 10 in order: %+v", in)
 	}
-	if len(b.messages) > 2*b.maxMessages {
-		t.Fatalf("buffer grew past 2*max: %d", len(b.messages))
+	if l := b.existingChat(42); len(l.msgs) > 2*b.maxMessages {
+		t.Fatalf("buffer grew past 2*max: %d", len(l.msgs))
 	}
 }
 
-// BenchmarkSendMessageFullStore measures sendMessage once the per-bot
-// history is at its cap, the steady state of a long load test.
+// BenchmarkSendMessageFullStore measures sendMessage once the chat history
+// is at its cap, the steady state of a long load test.
 func BenchmarkSendMessageFullStore(b *testing.B) {
 	srv := New(Config{Quiet: true})
 	h := srv.Handler()
 	bot := srv.handlers.Store.Bot("741:bench-full")
-	for i := range defaultMaxMessages {
+	for i := range DefaultMaxMessagesPerChat {
 		bot.AppendMessage(Message{MessageID: i + 1, Chat: Chat{ID: 42}})
 	}
 	b.ReportAllocs()

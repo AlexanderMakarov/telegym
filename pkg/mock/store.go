@@ -16,8 +16,14 @@ type Store struct {
 	mu sync.RWMutex
 
 	bots          map[string]*botEntry
-	messageIDSeed atomic.Int64
+	messageIDSeed atomic.Int64 // legacy global counter behind NextMessageID
+	eventSeq      atomic.Int64
 	updateIDSeed  atomic.Int64
+
+	// messageIDBase seeds every chat's message_id counter (see newChatLog).
+	messageIDBase int64
+	// MaxMessagesPerChat caps the outbound history kept per chat.
+	MaxMessagesPerChat int
 
 	Files *FileStore     // multipart upload retention for media proxying
 	Proxy *proxyRegistry // outbound forward bindings for real-TG relay
@@ -30,6 +36,7 @@ type botEntry struct {
 	identity    User
 	webhookURL  string
 	secretToken string
+	webhookSet  bool
 
 	// firstSeen is set once at creation; lastSeen is bumped on every
 	// withBot dispatch. Both are unix seconds. lastSeen uses atomic ops
@@ -37,8 +44,11 @@ type botEntry struct {
 	firstSeen int64
 	lastSeen  atomic.Int64
 
-	msgMu    sync.RWMutex
-	messages []Message // outbound messages from bot, append-only with ring trim
+	// msgMu guards the webhook fields and the chats map; each chat log has
+	// its own lock so writers to different chats never contend and a poll
+	// reads only its own chat.
+	msgMu sync.RWMutex
+	chats map[int64]*chatLog
 
 	inputsMu sync.RWMutex
 	inputs   []UserInput // text inputs from the debug chat UI (display only)
@@ -54,6 +64,8 @@ type botEntry struct {
 	toastsMu sync.Mutex
 	toasts   map[int64][]Toast
 
+	updates *updateQueue
+
 	// Chat action from sendChatAction ("typing", "upload_photo", ...) per
 	// chat and forum topic. Cleared by the next new message in that topic
 	// or after typingTTL.
@@ -63,8 +75,15 @@ type botEntry struct {
 	topicsMu sync.Mutex
 	topics   map[int64][]ForumTopic
 
-	maxMessages int
+	maxMessages int // per chat
 	maxInputs   int
+}
+
+// chatLog is the outbound history and message_id counter of one chat.
+type chatLog struct {
+	mu     sync.Mutex
+	msgs   []Message // append-only with ring trim, ordered by EventSeq
+	nextID atomic.Int64
 }
 
 // Toast is the text the bot wanted to surface via answerCallbackQuery.
@@ -80,7 +99,7 @@ type Toast struct {
 // Not part of bot outbound; kept only so the chat view can render the
 // user's own messages alongside bot replies.
 //
-// Seq is assigned from the same monotonic counter as Message.MessageID,
+// Seq is assigned from the same monotonic counter as Message.EventSeq,
 // so a unified sort by Seq correctly orders user inputs and bot replies
 // even when their second-resolution Date values collide.
 type UserInput struct {
@@ -91,17 +110,35 @@ type UserInput struct {
 	Seq    int    `json:"seq"`
 }
 
-const defaultMaxMessages = 5000
+// DefaultMaxMessagesPerChat is the default outbound history kept per chat.
+// Pollers read every 25-250ms, so a few hundred is plenty, and memory stays
+// bounded on long runs: the buffer peaks at 2x the cap before trimming, so
+// 1000 chats with keyboards stay around 0.5 GB.
+const DefaultMaxMessagesPerChat = 200
+
+// maxToastsPerChat bounds callback answers awaiting the debug chat. Only the
+// browser UI drains them, so under k6 they would otherwise grow all run.
+const maxToastsPerChat = 20
 
 // NewStore returns an initialized Store.
 func NewStore() *Store {
+	now := time.Now()
 	s := &Store{
-		bots:  make(map[string]*botEntry),
-		Files: NewFileStore(),
-		Proxy: newProxyRegistry(),
+		bots:               make(map[string]*botEntry),
+		Files:              NewFileStore(),
+		Proxy:              newProxyRegistry(),
+		MaxMessagesPerChat: DefaultMaxMessagesPerChat,
+		// Telegram numbers messages per chat and keeps message_id within
+		// int32; bots commonly store it in 32-bit columns. Each chat counts
+		// from a base below 1e9 that changes between mock restarts, so IDs
+		// stay small, never approach math.MaxInt32 and rarely repeat across
+		// restarts.
+		messageIDBase: (now.Unix() % 1_000_000) * 1000,
 	}
-	s.messageIDSeed.Store(time.Now().UnixMilli())
-	s.updateIDSeed.Store(time.Now().Unix() * 1000)
+	s.messageIDSeed.Store(s.messageIDBase)
+	// EventSeq orders every stored event; int64, so it can start high.
+	s.eventSeq.Store(now.UnixMilli())
+	s.updateIDSeed.Store(now.Unix() * 1000)
 	return s
 }
 
@@ -127,8 +164,9 @@ func (s *Store) Bot(token string) *botEntry {
 		token:       token,
 		identity:    identityFromToken(token),
 		firstSeen:   now,
-		maxMessages: defaultMaxMessages,
+		maxMessages: s.MaxMessagesPerChat,
 		maxInputs:   1000,
+		updates:     newUpdateQueue(),
 	}
 	b.lastSeen.Store(now)
 	s.bots[token] = b
@@ -160,11 +198,7 @@ func (s *Store) Bots() []BotInfo {
 	s.mu.RLock()
 	out := make([]BotInfo, 0, len(s.bots))
 	for tok, b := range s.bots {
-		b.msgMu.RLock()
-		stored := newest(b.messages, b.maxMessages)
-		msgs := len(stored)
-		chats := uniqueChatIDs(stored)
-		b.msgMu.RUnlock()
+		msgs, chats := b.messageStats()
 		out = append(out, BotInfo{
 			TokenShort:   shortenToken(tok),
 			TokenFull:    tok,
@@ -182,12 +216,19 @@ func (s *Store) Bots() []BotInfo {
 	return out
 }
 
-func uniqueChatIDs(msgs []Message) int {
-	seen := make(map[int64]struct{}, len(msgs))
-	for _, m := range msgs {
-		seen[m.Chat.ID] = struct{}{}
+// messageStats returns the number of stored messages and of chats that
+// have at least one.
+func (b *botEntry) messageStats() (msgs, chats int) {
+	for _, l := range b.chatLogs() {
+		l.mu.Lock()
+		n := len(newest(l.msgs, b.maxMessages))
+		l.mu.Unlock()
+		msgs += n
+		if n > 0 {
+			chats++
+		}
 	}
-	return len(seen)
+	return msgs, chats
 }
 
 // identityFromToken derives a deterministic bot User from the token. Real
@@ -212,14 +253,72 @@ func identityFromToken(token string) User {
 	}
 }
 
-func (s *Store) NextMessageID() int  { return int(s.messageIDSeed.Add(1)) }
+// NextMessageID returns a store-wide message ID within int32.
+//
+// Deprecated: Telegram numbers messages per chat; use botEntry.NextMessageID.
+func (s *Store) NextMessageID() int { return int(s.messageIDSeed.Add(1)) }
+
+// NextEventSeq returns the next value of the monotonic event counter that
+// orders stored messages and user inputs (Message.EventSeq, UserInput.Seq).
+func (s *Store) NextEventSeq() int64 { return s.eventSeq.Add(1) }
+
 func (s *Store) NextUpdateID() int64 { return s.updateIDSeed.Add(1) }
+
+// chat returns the log of chatID, creating it on first use.
+func (b *botEntry) chat(chatID int64) *chatLog {
+	b.msgMu.RLock()
+	l := b.chats[chatID]
+	b.msgMu.RUnlock()
+	if l != nil {
+		return l
+	}
+	b.msgMu.Lock()
+	defer b.msgMu.Unlock()
+	if l = b.chats[chatID]; l == nil {
+		l = &chatLog{}
+		if b.parent != nil {
+			l.nextID.Store(b.parent.messageIDBase)
+		}
+		if b.chats == nil {
+			b.chats = map[int64]*chatLog{}
+		}
+		b.chats[chatID] = l
+	}
+	return l
+}
+
+// existingChat returns the log of chatID or nil; reads use it so polling a
+// chat that never had messages does not allocate one.
+func (b *botEntry) existingChat(chatID int64) *chatLog {
+	b.msgMu.RLock()
+	defer b.msgMu.RUnlock()
+	return b.chats[chatID]
+}
+
+// chatLogs snapshots the chat logs; each still needs its own lock.
+func (b *botEntry) chatLogs() []*chatLog {
+	b.msgMu.RLock()
+	defer b.msgMu.RUnlock()
+	out := make([]*chatLog, 0, len(b.chats))
+	for _, l := range b.chats {
+		out = append(out, l)
+	}
+	return out
+}
+
+// NextMessageID allocates the next message_id in chatID. Bot replies, user
+// messages and forum topic service messages share the sequence, as in
+// Telegram.
+func (b *botEntry) NextMessageID(chatID int64) int {
+	return int(b.chat(chatID).nextID.Add(1))
+}
 
 // SetWebhook records a webhook URL plus secret token for the bot.
 func (b *botEntry) SetWebhook(url, secret string) {
 	b.msgMu.Lock()
 	b.webhookURL = url
 	b.secretToken = secret
+	b.webhookSet = true
 	b.msgMu.Unlock()
 }
 
@@ -238,7 +337,9 @@ func (b *botEntry) Webhook() (url, secret string) {
 // Every appended entry receives a fresh EventSeq from the global monotonic
 // counter, even when MessageID collides (the case for editMessage* --
 // the bot edits message X and we store the new state as a separate
-// entry with the same MessageID but a higher EventSeq).
+// entry with the same MessageID but a higher EventSeq). EventSeq is taken
+// under the chat lock, so a chat's log is always in EventSeq order and
+// pollers that skip seen sequences cannot miss a concurrent append.
 func (b *botEntry) AppendMessage(m Message) {
 	if m.isNew {
 		b.ClearTyping(m.Chat.ID, m.MessageThreadID)
@@ -251,12 +352,13 @@ func (b *botEntry) AppendMessage(m Message) {
 }
 
 func (b *botEntry) storeMessage(m Message) {
+	l := b.chat(m.Chat.ID)
+	l.mu.Lock()
 	if b.parent != nil {
-		m.EventSeq = int64(b.parent.NextMessageID())
+		m.EventSeq = b.parent.NextEventSeq()
 	}
-	b.msgMu.Lock()
-	b.messages = appendCapped(b.messages, m, b.maxMessages)
-	b.msgMu.Unlock()
+	l.msgs = appendCapped(l.msgs, m, b.maxMessages)
+	l.mu.Unlock()
 }
 
 // CreateForumTopic opens a new topic in chatID. Like Telegram, every call
@@ -265,10 +367,7 @@ func (b *botEntry) storeMessage(m Message) {
 // message, which is stored in the topic thread. The service message is
 // not relayed to the proxy - real Telegram creates it itself.
 func (b *botEntry) CreateForumTopic(chatID int64, name string, iconColor int, iconEmojiID string) ForumTopic {
-	threadID := 1
-	if b.parent != nil {
-		threadID = b.parent.NextMessageID()
-	}
+	threadID := b.NextMessageID(chatID)
 	topic := ForumTopic{MessageThreadID: threadID, Name: name, IconColor: iconColor, IconCustomEmojiID: iconEmojiID}
 
 	b.topicsMu.Lock()
@@ -304,55 +403,79 @@ func (b *botEntry) ForumTopics(chatID int64) []ForumTopic {
 // Returns false when nothing matched (e.g. a user message or an entry
 // already evicted from the buffer).
 func (b *botEntry) DeleteMessage(chatID int64, messageID int) bool {
-	b.msgMu.Lock()
-	defer b.msgMu.Unlock()
-	kept := b.messages[:0]
-	for _, m := range b.messages {
-		if m.Chat.ID == chatID && m.MessageID == messageID {
+	l := b.existingChat(chatID)
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	kept := l.msgs[:0]
+	for _, m := range l.msgs {
+		if m.MessageID == messageID {
 			continue
 		}
 		kept = append(kept, m)
 	}
-	removed := len(kept) != len(b.messages)
-	clear(b.messages[len(kept):])
-	b.messages = kept
+	removed := len(kept) != len(l.msgs)
+	clear(l.msgs[len(kept):])
+	l.msgs = kept
 	return removed
 }
 
-// Messages returns up to `limit` most-recent messages for chatID. If chatID
-// is zero, returns messages across all chats.
+// Messages returns up to `limit` most-recent messages for chatID, newest
+// first. If chatID is zero, returns messages across all chats.
 func (b *botEntry) Messages(chatID int64, limit int) []Message {
 	if limit <= 0 {
 		limit = 100
 	}
-	b.msgMu.RLock()
-	defer b.msgMu.RUnlock()
-
-	stored := newest(b.messages, b.maxMessages)
-	out := make([]Message, 0, limit)
-	for i := len(stored) - 1; i >= 0 && len(out) < limit; i-- {
-		if chatID == 0 || stored[i].Chat.ID == chatID {
+	if chatID != 0 {
+		l := b.existingChat(chatID)
+		if l == nil {
+			return []Message{}
+		}
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		stored := newest(l.msgs, b.maxMessages)
+		out := make([]Message, 0, min(limit, len(stored)))
+		for i := len(stored) - 1; i >= 0 && len(out) < limit; i-- {
 			out = append(out, stored[i])
 		}
+		return out
 	}
-	return out
-}
-
-// MessagesSince returns messages whose Date >= sinceUnix for chatID.
-// Used by the xk6 extension to poll for new replies without re-reading all.
-func (b *botEntry) MessagesSince(chatID, sinceUnix int64) []Message {
-	b.msgMu.RLock()
-	defer b.msgMu.RUnlock()
 
 	var out []Message
-	for _, m := range newest(b.messages, b.maxMessages) {
-		if m.Date < sinceUnix {
-			continue
+	for _, l := range b.chatLogs() {
+		l.mu.Lock()
+		stored := newest(l.msgs, b.maxMessages)
+		out = append(out, stored[max(0, len(stored)-limit):]...)
+		l.mu.Unlock()
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].EventSeq > out[j].EventSeq })
+	return out[:min(limit, len(out))]
+}
+
+// MessagesSince returns messages whose Date >= sinceUnix for chatID, oldest
+// first; chatID zero means all chats. Used by the xk6 extension to poll for
+// new replies, so the per-chat case reads only that chat's log.
+func (b *botEntry) MessagesSince(chatID, sinceUnix int64) []Message {
+	var logs []*chatLog
+	if chatID == 0 {
+		logs = b.chatLogs()
+	} else if l := b.existingChat(chatID); l != nil {
+		logs = []*chatLog{l}
+	}
+	var out []Message
+	for _, l := range logs {
+		l.mu.Lock()
+		for _, m := range newest(l.msgs, b.maxMessages) {
+			if m.Date >= sinceUnix {
+				out = append(out, m)
+			}
 		}
-		if chatID != 0 && m.Chat.ID != chatID {
-			continue
-		}
-		out = append(out, m)
+		l.mu.Unlock()
+	}
+	if chatID == 0 {
+		sort.Slice(out, func(i, j int) bool { return out[i].EventSeq < out[j].EventSeq })
 	}
 	return out
 }
@@ -396,7 +519,11 @@ func (b *botEntry) PushToast(chatID int64, t Toast) {
 	if b.toasts == nil {
 		b.toasts = map[int64][]Toast{}
 	}
-	b.toasts[chatID] = append(b.toasts[chatID], t)
+	q := append(b.toasts[chatID], t)
+	if over := len(q) - maxToastsPerChat; over > 0 {
+		q = append(q[:0:0], q[over:]...) // drop the oldest, release the old array
+	}
+	b.toasts[chatID] = q
 }
 
 // PopToast returns and removes the oldest pending toast for a chat.
@@ -499,11 +626,15 @@ func (b *botEntry) ActiveTyping(chatID int64) []ChatAction {
 }
 
 // ClearMessages drops all stored outbound messages for the bot.
+// Message ID counters are kept, so IDs never repeat after a clear.
 func (b *botEntry) ClearMessages() int {
-	b.msgMu.Lock()
-	n := len(b.messages)
-	b.messages = nil
-	b.msgMu.Unlock()
+	n := 0
+	for _, l := range b.chatLogs() {
+		l.mu.Lock()
+		n += len(newest(l.msgs, b.maxMessages))
+		l.msgs = nil
+		l.mu.Unlock()
+	}
 	return n
 }
 
@@ -513,7 +644,7 @@ func (b *botEntry) ClearMessages() int {
 // they share the same one-second Date.
 func (b *botEntry) AppendInput(in UserInput) {
 	if b.parent != nil {
-		in.Seq = b.parent.NextMessageID()
+		in.Seq = int(b.parent.NextEventSeq())
 	}
 	b.inputsMu.Lock()
 	b.inputs = appendCapped(b.inputs, in, b.maxInputs)
