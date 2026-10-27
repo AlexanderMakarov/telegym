@@ -30,6 +30,9 @@ jobs:
             go.sum
             pkg/xk6/go.sum
 
+      - name: Check dependency files
+        run: make check-deps
+
       - name: gofmt
         run: test -z "$(gofmt -l -s . | tee /dev/stderr)"
 

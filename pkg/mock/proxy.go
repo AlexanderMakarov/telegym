@@ -233,6 +233,28 @@ func isPassiveMediaType(ct string) bool {
 	return strings.HasPrefix(ct, "video/") || strings.HasPrefix(ct, "audio/")
 }
 
+// DebugDeleteFile handles DELETE /debug/files/:file_id, returning 404 if absent.
+// It releases captured bytes without removing recorded messages.
+func (h *Handlers) DebugDeleteFile(c *gin.Context) {
+	id := c.Param("file_id")
+	if !h.Store.Files.delete(id) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file not found", "file_id": id})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "file_id": id})
+}
+
+// DebugDeleteFiles handles DELETE /debug/files, atomically clearing uploads
+// across all bots and returning released file and byte counts.
+func (h *Handlers) DebugDeleteFiles(c *gin.Context) {
+	count, bytes := h.Store.Files.clear()
+	c.JSON(http.StatusOK, gin.H{
+		"ok":            true,
+		"deleted":       count,
+		"deleted_bytes": bytes,
+	})
+}
+
 // DebugListFiles is a debugging convenience: shows store stats and the
 // most recent file_ids without contents.
 func (h *Handlers) DebugListFiles(c *gin.Context) {
