@@ -2,13 +2,13 @@
 //
 // Configuration is via flags or environment variables:
 //
-//	-listen,           TELEGYM_MOCK_LISTEN              ":5678"
-//	-metrics-listen,   TELEGYM_MOCK_METRICS_LISTEN      ":9104"  (empty=disabled)
-//	-default-webhook,  TELEGYM_MOCK_DEFAULT_WEBHOOK     ""  (use per-bot setWebhook)
-//	-file-store-max-bytes, TELEGYM_MOCK_FILE_STORE_MAX_BYTES 0 (0=100 MiB)
-//	-quiet,            TELEGYM_MOCK_QUIET               false
+//	-listen,                TELEGYM_MOCK_LISTEN                 ":5678"
+//	-metrics-listen,        TELEGYM_MOCK_METRICS_LISTEN         ":9104"  (empty=disabled)
+//	-default-webhook,       TELEGYM_MOCK_DEFAULT_WEBHOOK        ""  (use per-bot setWebhook)
 //	-max-messages-per-chat, TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT  200
-//	-banner                                             print ASCII banner with ANSI colors and exit
+//	-file-store-max-bytes,  TELEGYM_MOCK_FILE_STORE_MAX_BYTES   0  (0=100 MiB)
+//	-quiet,                 TELEGYM_MOCK_QUIET                  false
+//	-banner                                                     print ASCII banner with ANSI colors and exit
 package main
 
 import (

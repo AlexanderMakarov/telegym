@@ -325,6 +325,9 @@ How it works:
 - The proxy fetches any referenced media bytes from `/debug/files/:file_id`
   (captured from the bot's multipart uploads) and calls the real Bot API
   to deliver to you
+- Captured uploads are kept up to `TELEGYM_MOCK_FILE_STORE_MAX_BYTES`
+  (default 100 MiB, oldest evicted first); an upload larger than that is
+  rejected with 413
 
 Limitations of v1: stickers sent by `file_id` are rendered as `[sticker]`
 text in the real chat (the proxy bot doesn't own those file_ids). Photos,

@@ -371,11 +371,11 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	// For file_id-only requests (cached), we keep the existing fake ID.
 	fileID, err := h.captureUploadedFile(c, kind)
 	if err != nil {
-		status := http.StatusBadRequest
 		if errors.Is(err, errUploadTooLarge) || errors.Is(err, errFileStoreTooSmall) {
-			status = http.StatusRequestEntityTooLarge
+			errResp(c, http.StatusRequestEntityTooLarge, "Request Entity Too Large: "+err.Error())
+			return
 		}
-		errResp(c, status, "Bad Request: "+err.Error())
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
 		return
 	}
 	if fileID == "" {
