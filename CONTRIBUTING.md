@@ -71,7 +71,8 @@ git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
 It pushes `ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}` and
 drafts a GitHub Release with binaries for every platform, k6 with
 `xk6-telegym`, `checksums.txt` and generated notes. Edit the draft before
-publishing: give it a title, a short summary grouped by area (Mock,
+publishing: give it a title that starts with the version
+(`v0.6.0 Flood limits & prebuilt releases`), a short summary grouped by area (Mock,
 Debug chat, Performance, Security...) and thank the contributors who made
 the release, then press **Publish**. Use
 [semver](https://semver.org/): bump the minor version for features, the
