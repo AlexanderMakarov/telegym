@@ -11,6 +11,13 @@ type APIResponse struct {
 	Result      interface{} `json:"result,omitempty"`
 	Description string      `json:"description,omitempty"`
 	ErrorCode   int         `json:"error_code,omitempty"`
+	// Parameters carries retry_after on 429 responses, as in the Bot API.
+	Parameters *ResponseParameters `json:"parameters,omitempty"`
+}
+
+// ResponseParameters explains why a request failed (subset of the Bot API type).
+type ResponseParameters struct {
+	RetryAfter int `json:"retry_after,omitempty"`
 }
 
 type User struct {

@@ -9,15 +9,21 @@
 //	-file-store-max-bytes,  TELEGYM_MOCK_FILE_STORE_MAX_BYTES   0  (0=100 MiB)
 //	-quiet,                 TELEGYM_MOCK_QUIET                  false
 //	-request-journal,       TELEGYM_MOCK_REQUEST_JOURNAL        true  (record calls for /debug/requests)
+//	-rate-limits,           TELEGYM_MOCK_RATE_LIMITS            false (429 past Telegram flood limits)
+//	-latency,               TELEGYM_MOCK_LATENCY                ""  (e.g. 50ms or 20ms-150ms)
+//	-fault-rate,            TELEGYM_MOCK_FAULT_RATE             0  (fraction of calls answered 500)
 //	-banner                                                     print ASCII banner with ANSI colors and exit
 package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/kolomiichenko/telegym/pkg/mock"
 )
@@ -54,6 +60,27 @@ func envInt64(key string, fallback int64) int64 {
 	return fallback
 }
 
+// parseLatency accepts "" (none), a fixed "50ms" or a range "20ms-150ms".
+func parseLatency(s string) (lo, hi time.Duration, err error) {
+	if s == "" {
+		return 0, 0, nil
+	}
+	from, to, isRange := strings.Cut(s, "-")
+	if lo, err = time.ParseDuration(strings.TrimSpace(from)); err != nil {
+		return 0, 0, err
+	}
+	hi = lo
+	if isRange {
+		if hi, err = time.ParseDuration(strings.TrimSpace(to)); err != nil {
+			return 0, 0, err
+		}
+	}
+	if lo < 0 || hi < lo {
+		return 0, 0, fmt.Errorf("want 0 <= min <= max, got %s", s)
+	}
+	return lo, hi, nil
+}
+
 func main() {
 	cfg := mock.Config{}
 
@@ -65,9 +92,20 @@ func main() {
 	flag.BoolVar(&cfg.Quiet, "quiet", envBool("TELEGYM_MOCK_QUIET", false), "Suppress per-request logs")
 	flag.IntVar(&cfg.MaxMessagesPerChat, "max-messages-per-chat", envInt("TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT", mock.DefaultMaxMessagesPerChat), "Outbound messages kept per chat")
 	requestJournal := flag.Bool("request-journal", envBool("TELEGYM_MOCK_REQUEST_JOURNAL", true), "Record Bot API calls for /debug/requests (disable on load runs)")
+	flag.BoolVar(&cfg.RateLimits, "rate-limits", envBool("TELEGYM_MOCK_RATE_LIMITS", false), "Answer 429 with retry_after past Telegram flood limits")
+	latency := flag.String("latency", envOr("TELEGYM_MOCK_LATENCY", ""), "Delay Bot API calls: fixed (50ms) or random range (20ms-150ms)")
+	faultRate := flag.String("fault-rate", envOr("TELEGYM_MOCK_FAULT_RATE", "0"), "Fraction of Bot API calls answered with 500 (0-1)")
 	flag.BoolVar(&bannerOnly, "banner", false, "Print the ASCII banner with raw ANSI colors to stdout and exit (for `freeze` and similar renderers)")
 	flag.Parse()
 	cfg.DisableRequestJournal = !*requestJournal
+
+	var err error
+	if cfg.LatencyMin, cfg.LatencyMax, err = parseLatency(*latency); err != nil {
+		log.Fatalf("telegym-mock: invalid -latency %q: %v", *latency, err)
+	}
+	if cfg.FaultRate, err = strconv.ParseFloat(*faultRate, 64); err != nil || cfg.FaultRate < 0 || cfg.FaultRate > 1 {
+		log.Fatalf("telegym-mock: invalid -fault-rate %q: want a number from 0 to 1", *faultRate)
+	}
 
 	if bannerOnly {
 		// Write raw (always-colored) banner so downstream tools like
