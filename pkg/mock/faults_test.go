@@ -70,7 +70,10 @@ func TestRateLimitsPrivateChat(t *testing.T) {
 }
 
 func TestRateLimitsGroupAndBot(t *testing.T) {
-	srv := New(Config{Quiet: true, RateLimits: true})
+	// The default bot bucket refills 30 tokens/s, so a slow CI runner could
+	// earn an extra token mid-test; keep the burst but make refill negligible.
+	bot := RateLimit{Rate: 0.001, Burst: DefaultFloodLimits.Bot.Burst}
+	srv := New(Config{Quiet: true, RateLimits: true, FloodLimits: FloodLimits{Bot: bot}})
 	for i := range int(DefaultFloodLimits.Group.Burst) {
 		if code, _ := callBot(t, srv, "sendMessage", sendTo(`"-100500"`)); code != http.StatusOK {
 			t.Fatalf("group call %d: status %d, want 200", i, code)
