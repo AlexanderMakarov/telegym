@@ -18,6 +18,9 @@ type Config struct {
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
 	FileStoreMaxBytes int64  // 0 uses the 100 MiB default
 	Quiet             bool   // suppress request logs (recommended for load runs)
+	// DisableRequestJournal skips recording Bot API calls for
+	// /debug/requests, saving per-request work on load runs.
+	DisableRequestJournal bool
 	// MaxMessagesPerChat caps the outbound history kept per chat; zero
 	// keeps DefaultMaxMessagesPerChat.
 	MaxMessagesPerChat int
@@ -72,6 +75,9 @@ func New(cfg Config) *Server {
 		router:   router,
 	}
 	router.Use(metrics.ginMiddleware())
+	if !cfg.DisableRequestJournal {
+		router.Use(s.requestJournalMiddleware())
+	}
 	s.registerRoutes()
 	return s
 }
@@ -158,6 +164,8 @@ func (s *Server) registerRoutes() {
 	s.router.POST("/debug/inject/update", s.handlers.DebugInjectUpdate)
 	s.router.GET("/debug/messages/:token", s.handlers.DebugListMessages)
 	s.router.POST("/debug/messages/:token/clear", s.handlers.DebugClearMessages)
+	s.router.GET("/debug/requests/:token", s.handlers.DebugListRequests)
+	s.router.POST("/debug/requests/:token/clear", s.handlers.DebugClearRequests)
 
 	// File storage (multipart uploads from bot, fetched by telegym-proxy)
 	s.router.GET("/debug/files", s.handlers.DebugListFiles)

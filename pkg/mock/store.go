@@ -19,6 +19,7 @@ type Store struct {
 	messageIDSeed atomic.Int64 // legacy global counter behind NextMessageID
 	eventSeq      atomic.Int64
 	updateIDSeed  atomic.Int64
+	requestIDSeed atomic.Int64
 
 	// messageIDBase seeds every chat's message_id counter (see newChatLog).
 	messageIDBase int64
@@ -74,6 +75,9 @@ type botEntry struct {
 	// Forum topics created via createForumTopic, per chat in creation order.
 	topicsMu sync.Mutex
 	topics   map[int64][]ForumTopic
+
+	requestMu sync.RWMutex
+	requests  []APIRequest
 
 	maxMessages int // per chat
 	maxInputs   int
