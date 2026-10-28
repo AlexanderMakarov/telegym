@@ -9,11 +9,13 @@
 //	-file-store-max-bytes,  TELEGYM_MOCK_FILE_STORE_MAX_BYTES   0  (0=100 MiB)
 //	-quiet,                 TELEGYM_MOCK_QUIET                  false
 //	-request-journal,       TELEGYM_MOCK_REQUEST_JOURNAL        true  (record calls for /debug/requests)
+//	-version                                                    print the version and exit
 //	-banner                                                     print ASCII banner with ANSI colors and exit
 package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -21,6 +23,9 @@ import (
 
 	"github.com/kolomiichenko/telegym/pkg/mock"
 )
+
+// version is set at release build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 func envOr(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok {
@@ -66,7 +71,12 @@ func main() {
 	flag.IntVar(&cfg.MaxMessagesPerChat, "max-messages-per-chat", envInt("TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT", mock.DefaultMaxMessagesPerChat), "Outbound messages kept per chat")
 	requestJournal := flag.Bool("request-journal", envBool("TELEGYM_MOCK_REQUEST_JOURNAL", true), "Record Bot API calls for /debug/requests (disable on load runs)")
 	flag.BoolVar(&bannerOnly, "banner", false, "Print the ASCII banner with raw ANSI colors to stdout and exit (for `freeze` and similar renderers)")
+	printVersion := flag.Bool("version", false, "Print the version and exit")
 	flag.Parse()
+	if *printVersion {
+		fmt.Println(version)
+		return
+	}
 	cfg.DisableRequestJournal = !*requestJournal
 
 	if bannerOnly {
