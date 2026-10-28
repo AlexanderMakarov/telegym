@@ -318,8 +318,17 @@ func TestPollingTimeout(t *testing.T) {
 
 func TestPollingDebugChat(t *testing.T) {
 	srv := New(Config{Quiet: true})
+	rec := pollingRequest(srv, http.MethodGet, "/debug/chat/888:poll/42", "")
+	if !strings.Contains(rec.Body.String(), "start your bot") {
+		t.Fatalf("chat header before the bot connects: %s", rec.Body.String())
+	}
 	startPolling(t, srv, "888:poll")
-	rec := httptest.NewRecorder()
+	rec = pollingRequest(srv, http.MethodGet, "/debug/chat/888:poll/42", "")
+	if !strings.Contains(rec.Body.String(), "polling getUpdates") || strings.Contains(rec.Body.String(), "start your bot") {
+		t.Fatalf("chat header does not show polling: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/chat/888:poll/42/send", strings.NewReader("text=hello&name=Alice"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	srv.Handler().ServeHTTP(rec, req)
@@ -368,5 +377,52 @@ func TestPollingQueueRetention(t *testing.T) {
 	srv.metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(rec.Body.String(), "telegym_mock_updates_evicted_total 1") {
 		t.Fatalf("eviction not counted: %s", rec.Body.String())
+	}
+}
+
+func TestDebugChatInterleavesUserAndBotMessages(t *testing.T) {
+	srv := New(Config{Quiet: true})
+	startPolling(t, srv, "888:order")
+	userSays := func(text string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/debug/chat/888:order/42/send", strings.NewReader("text="+text+"&name=Alice"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("chat send status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	botSays := func(text string) int {
+		t.Helper()
+		rec := pollingRequest(srv, http.MethodPost, "/bot888:order/sendMessage", `{"chat_id":42,"text":"`+text+`"}`)
+		var resp struct {
+			Result struct {
+				MessageID int `json:"message_id"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Result.MessageID == 0 {
+			t.Fatalf("sendMessage: %s", rec.Body.String())
+		}
+		return resp.Result.MessageID
+	}
+
+	userSays("u-one")
+	first := botSays("b-one")
+	userSays("u-two")
+	botSays("b-two")
+	// An edit keeps the message where it was.
+	pollingRequest(srv, http.MethodPost, "/bot888:order/editMessageText",
+		fmt.Sprintf(`{"chat_id":42,"message_id":%d,"text":"b-one-edited"}`, first))
+
+	body := pollingRequest(srv, http.MethodGet, "/debug/chat/888:order/42/messages", "").Body.String()
+	order := []string{"u-one", "b-one-edited", "u-two", "b-two"}
+	last := -1
+	for _, text := range order {
+		i := strings.Index(body, text)
+		if i <= last {
+			t.Fatalf("want order %v, %q is out of place:\n%s", order, text, body)
+		}
+		last = i
 	}
 }
