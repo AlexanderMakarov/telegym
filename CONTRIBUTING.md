@@ -68,9 +68,12 @@ Maintainers tag `main`; the `Release` workflow does the rest:
 git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
 ```
 
-It publishes a GitHub Release (binaries for every platform, k6 with
-`xk6-telegym`, `checksums.txt`, generated notes) and pushes
-`ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}`. Use
+It pushes `ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}` and
+drafts a GitHub Release with binaries for every platform, k6 with
+`xk6-telegym`, `checksums.txt` and generated notes. Edit the draft before
+publishing: give it a title, a short summary grouped by area (Mock,
+Debug chat, Performance, Security...) and thank the contributors who made
+the release, then press **Publish**. Use
 [semver](https://semver.org/): bump the minor version for features, the
 patch version for fixes. A tag like `v0.6.0-rc.1` is published as well,
 without moving `latest`.

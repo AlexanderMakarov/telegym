@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v0.6.0 to publish a GitHub Release with prebuilt binaries
+# Push a tag like v0.6.0 to draft a GitHub Release with prebuilt binaries
 # (telegym-mock, telegym-proxy, k6 with xk6-telegym) and the telegym-mock
 # image on GHCR.
 on:
@@ -111,7 +111,9 @@ jobs:
         run: |
           cd dist
           sha256sum -- * > checksums.txt
-          flags=(--verify-tag --generate-notes)
+          # A draft, so the maintainer adds the title, summary and thanks to
+          # contributors on top of the generated notes before publishing.
+          flags=(--draft --verify-tag --generate-notes)
           # v1.2.3-rc.1 and similar are pre-releases, never "Latest".
           [[ "$TAG" == *-* ]] && flags+=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" -- *
