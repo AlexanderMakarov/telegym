@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,6 +22,18 @@ type Config struct {
 	// DisableRequestJournal skips recording Bot API calls for
 	// /debug/requests, saving per-request work on load runs.
 	DisableRequestJournal bool
+	// RateLimits answers message-sending calls with 429 and retry_after once
+	// they exceed FloodLimits (zero fields keep DefaultFloodLimits: 30/s per
+	// bot, 1000/s with allow_paid_broadcast, about 1/s per private chat,
+	// 20/min per group).
+	RateLimits  bool
+	FloodLimits FloodLimits
+	// LatencyMin and LatencyMax delay every Bot API call by a random
+	// duration in that range; zero disables.
+	LatencyMin, LatencyMax time.Duration
+	// FaultRate is the fraction of Bot API calls answered with a 500
+	// (0 disables, 1 fails every call).
+	FaultRate float64
 	// MaxMessagesPerChat caps the outbound history kept per chat; zero
 	// keeps DefaultMaxMessagesPerChat.
 	MaxMessagesPerChat int
@@ -77,6 +90,9 @@ func New(cfg Config) *Server {
 	router.Use(metrics.ginMiddleware())
 	if !cfg.DisableRequestJournal {
 		router.Use(s.requestJournalMiddleware())
+	}
+	if cfg.RateLimits || cfg.LatencyMax > 0 || cfg.LatencyMin > 0 || cfg.FaultRate > 0 {
+		router.Use(s.faultsMiddleware())
 	}
 	s.registerRoutes()
 	return s

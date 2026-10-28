@@ -147,6 +147,32 @@ if you want a persistent local config.
   `POST /debug/requests/:token/clear` empties it. The last 5000 calls are
   kept. Set `TELEGYM_MOCK_REQUEST_JOURNAL=false` on load runs to skip it.
 
+### Rate limits, latency and failures
+
+Off by default; turn them on to see how the bot copes with real Telegram:
+
+- `TELEGYM_MOCK_RATE_LIMITS=true` answers message-sending calls (`send*`,
+  `copy*`, `forward*`) with `429 Too Many Requests` and
+  `parameters.retry_after` once they exceed Telegram's
+  [flood limits](https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this):
+  30 messages/s per bot, about 1/s per private chat (bursts of 3 tolerated)
+  and 20/min per group or channel. Refused calls don't count.
+  Limits are token buckets, so short bursts pass and only sustained overload
+  is refused. Calls with `allow_paid_broadcast=true` get 1000/s per bot
+  instead of 30/s (per-chat limits still apply) and are counted in
+  `telegym_mock_paid_broadcast_messages_total` - 0.1 Stars each on real
+  Telegram.
+- Tune any limit as `rate[,burst]` (`N/s`, `N/min` or `N/h`):
+  `TELEGYM_MOCK_RATE_LIMIT_BOT=30/s,60`, `..._PAID`, `..._PRIVATE=1/s,3`,
+  `..._GROUP=20/min`. Telegram publishes rates but not burst sizes, so the
+  defaults are estimates.
+- `TELEGYM_MOCK_LATENCY=20ms-150ms` delays each Bot API call by a random
+  duration in that range (`50ms` for a fixed delay).
+- `TELEGYM_MOCK_FAULT_RATE=0.01` fails 1% of Bot API calls with a 500.
+
+Debug routes and the chat UI are never affected. Rejections show up in
+`telegym_mock_requests_total{status="429"}` and `{status="500"}`.
+
 ## Repo layout
 
 ```
