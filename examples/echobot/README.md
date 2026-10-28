@@ -46,6 +46,15 @@ TELEGYM_BOT_TOKEN=1234567890:telegym_default_mock_token_xxxxxxxx \
   ./bin/k6 run examples/echobot/scenarios/echo.js
 ```
 
+By default echobot registers a webhook on `http://localhost:8443/webhook`.
+With `-poll` (or `ECHOBOT_POLL=true`) it long-polls `getUpdates` instead and
+needs no inbound port, so it also works against the mock in Docker:
+
+```bash
+docker run -d -p 5678:5678 ghcr.io/kolomiichenko/telegym-mock
+./bin/echobot -poll
+```
+
 ## Writing your own scenario
 
 `echo.js` is the smallest possible scenario and is a good copy-paste base:

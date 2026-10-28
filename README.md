@@ -10,7 +10,7 @@
 [![Docker image](https://img.shields.io/badge/ghcr.io-telegym--mock-2496ED?logo=docker&logoColor=white)](https://github.com/kolomiichenko/telegym/pkgs/container/telegym-mock)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-1f6feb)](https://deepwiki.com/kolomiichenko/telegym)
 
-<p align="center"><img src="docs/banner.png" alt="telegym - load testing for telegram bots" width="700"></p>
+<p align="center"><img src="docs/banner.png" alt="telegym - load testing for telegram bots" width="440"></p>
 
 Universal load-testing kit for Telegram bots. Drop-in mock of the Telegram Bot
 API plus a k6 extension for writing virtual-user scenarios. Works with any bot
@@ -32,22 +32,20 @@ plus an `xk6` extension so k6 scenarios can drive virtual Telegram users.
 ## Architecture
 
 ```
-  k6 scenario  ──► xk6-telegym ──► /debug/inject/update ──► telegym-mock
-                                                              │
-                                                              ▼
-                                                  POST <bot_webhook_url>
-                                                              │
-                                                              ▼
-                                                         your bot
-                                                              │
-                                                              ▼
-                                                  POST telegym-mock/bot<token>/sendMessage
-                                                              │
-                                                              ▼
-                                                  stored in telegym-mock.botMessages
-                                                              │
-                                                              ▼
-                                       xk6.awaitButton ◄── GET /debug/botMessages
+  k6 scenario ──► xk6-telegym ──► POST /debug/inject/update ──► telegym-mock
+                                                                    │
+                                        webhook POST, or the bot's getUpdates
+                                                                    ▼
+                                                                your bot
+                                                                    │
+                                                                    ▼
+                                             POST telegym-mock/bot<token>/sendMessage
+                                                                    │
+                                                                    ▼
+                                                     stored per chat in the mock
+                                                                    │
+                                                                    ▼
+                         tg.awaitText / awaitButton ◄── GET /debug/messages/:token
 ```
 
 ## Prerequisites
@@ -71,7 +69,19 @@ docker run --rm -p 5678:5678 -p 9104:9104 ghcr.io/kolomiichenko/telegym-mock:lat
 telegym-mock -version   # every binary reports its release tag
 ```
 
+**Bots on the host, mock in Docker.** A bot that polls `getUpdates` works
+as is. A webhook bot must register a URL the container can reach: on Docker
+Desktop that is `http://host.docker.internal:<port>/...`, not `localhost`,
+which inside the container is the container itself. The bundled echobot
+polls with `-poll`, which is what the demo above runs.
+
 ## Quickstart
+
+**From zero to a load test in three commands:**
+
+<p align="center"><img src="docs/demo.gif" alt="docker run the mock, start a bot, run a k6 scenario: 20 virtual users, all checks pass" width="860"></p>
+
+The same from source - build everything and run the bundled smoke test:
 
 ```bash
 # Optional one-time setup: copies .env.example -> .env and pre-fetches modules.
@@ -285,6 +295,19 @@ shape-valid JSON. Coverage breaks down in two layers:
   `createChatInviteLink → ChatInviteLink`, `getStickerSet → StickerSet`, etc.
   all parse cleanly in any Bot API client.
 
+A weekly workflow refreshes the spec and opens a PR whose description
+summarises the change: methods with explicit handlers that changed (the
+only part that may need a look), then new, removed and changed methods and
+types for information. New methods work right away through the generic
+dispatcher, so nothing fails the build and explicit handlers can be added
+at your own pace. To refresh by hand and see the same report:
+
+```bash
+cp pkg/mock/spec/api.json /tmp/api.old.json
+make refresh-spec
+scripts/spec-diff.sh /tmp/api.old.json pkg/mock/spec/api.json
+```
+
 ### Webhook vs polling
 
 Updates injected via `/debug/inject/update` (or the debug chat) are delivered
@@ -305,19 +328,6 @@ the same way Telegram does it:
 
 `allowed_updates` is accepted but not applied.
 
-A weekly workflow refreshes the spec and opens a PR whose description
-summarises the change: methods with explicit handlers that changed (the
-only part that may need a look), then new, removed and changed methods and
-types for information. New methods work right away through the generic
-dispatcher, so nothing fails the build and explicit handlers can be added
-at your own pace. To refresh by hand and see the same report:
-
-```bash
-cp pkg/mock/spec/api.json /tmp/api.old.json
-make refresh-spec
-scripts/spec-diff.sh /tmp/api.old.json pkg/mock/spec/api.json
-```
-
 ## Real-user modes
 
 Two ways to drive the bot manually, both running alongside a load test.
@@ -336,6 +346,8 @@ make mock-down       # when done
 Pick any chat_id, start typing. The page polls the mock for new bot
 replies once per second and renders inline keyboards as real clickable
 buttons. htmx.min.js is embedded in the binary - no CDN.
+
+<p align="center"><img src="docs/debug-chat.gif" alt="debug chat: /start, the bot replies with an inline button, clicking it gets an answer" width="880"></p>
 
 ### B. Real-Telegram relay (`telegym-proxy`)
 
