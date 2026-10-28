@@ -60,6 +60,21 @@ Open an issue first if you want to:
 - Add a new dependency (each one needs justification)
 - Restructure the repo or modify CI substantially
 
+## Releasing
+
+Maintainers tag `main`; the `Release` workflow does the rest:
+
+```bash
+git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
+```
+
+It publishes a GitHub Release (binaries for every platform, k6 with
+`xk6-telegym`, `checksums.txt`, generated notes) and pushes
+`ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}`. Use
+[semver](https://semver.org/): bump the minor version for features, the
+patch version for fixes. A tag like `v0.6.0-rc.1` is published as well,
+without moving `latest`.
+
 ## Code style
 
 Standard Go conventions, enforced by `gofmt` and `golangci-lint`. Code
