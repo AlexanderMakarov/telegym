@@ -51,6 +51,11 @@ characters; put detail in the body.
 
 ## What we welcome
 
+Planned work is listed as [issues labelled `roadmap`](https://github.com/kolomiichenko/telegym/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap),
+each with where to start in the code; [`good first issue`](https://github.com/kolomiichenko/telegym/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+marks the self-contained ones. Comment on an issue before starting so work
+isn't duplicated. Also welcome:
+
 - Bug fixes with a reproducer
 - Bot API coverage gaps (explicit handlers for currently-generic methods)
 - Performance improvements with before/after numbers

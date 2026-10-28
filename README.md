@@ -344,7 +344,7 @@ make mock-down       # when done
 ```
 
 Pick any chat_id, start typing. The page polls the mock for new bot
-replies once per second and renders inline keyboards as real clickable
+replies every 500 ms and renders inline keyboards as real clickable
 buttons. htmx.min.js is embedded in the binary - no CDN.
 
 <p align="center"><img src="docs/debug-chat.gif" alt="debug chat: /start, the bot replies with an inline button, clicking it gets an answer" width="880"></p>
@@ -432,10 +432,10 @@ to overlay your bot's metrics.
 
 ## Status
 
-Bootstrap complete. The kit covers mock + xk6 + pool persistence +
-HTMX chat + real-Telegram relay + Prometheus / Grafana flow.
-Future: HTMX SSE updates instead of polling, sticker file_id round-trip
-in telegym-proxy, k6 cloud distributed mode.
+The kit covers mock + xk6 + pool persistence + HTMX chat + real-Telegram
+relay + Prometheus / Grafana flow. Planned work is tracked as
+[issues labelled `roadmap`](https://github.com/kolomiichenko/telegym/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap);
+pick one up or open a new one.
 
 ## License
 
