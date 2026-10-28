@@ -229,14 +229,15 @@ relative - k6 is launched from repo root). Reads use `open('../data/...')`
 
 ## Bot API coverage
 
-All 176 Bot API methods are accepted and return shape-valid JSON. Coverage
-breaks down in two layers:
+Every method in the embedded Bot API spec is accepted and returns
+shape-valid JSON. Coverage breaks down in two layers:
 
-- **Explicit handlers** (15 methods) for the ones with real side effects:
+- **Explicit handlers** (about 20 methods, registered in
+  `pkg/mock/server.go`) for the ones with real side effects:
   send/edit messages and media land in the outbound store (queryable via
   `/debug/messages`), `setWebhook` registers the delivery URL, `getMe`
   returns a stable identity per token, etc.
-- **Spec-driven generic dispatcher** for the remaining 161 methods. It loads
+- **Spec-driven generic dispatcher** for all other methods. It loads
   an embedded `api.json` (from
   [PaulSonOfLars/telegram-bot-api-spec](https://github.com/PaulSonOfLars/telegram-bot-api-spec))
   and synthesises a zero-value response of the declared return type. So
@@ -264,10 +265,17 @@ the same way Telegram does it:
 
 `allowed_updates` is accepted but not applied.
 
-Refresh the spec when Telegram releases a new Bot API version:
+A weekly workflow refreshes the spec and opens a PR whose description
+summarises the change: methods with explicit handlers that changed (the
+only part that may need a look), then new, removed and changed methods and
+types for information. New methods work right away through the generic
+dispatcher, so nothing fails the build and explicit handlers can be added
+at your own pace. To refresh by hand and see the same report:
 
 ```bash
+cp pkg/mock/spec/api.json /tmp/api.old.json
 make refresh-spec
+scripts/spec-diff.sh /tmp/api.old.json pkg/mock/spec/api.json
 ```
 
 ## Real-user modes

@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Pull latest spec
-        run: make refresh-spec
+        run: |
+          cp pkg/mock/spec/api.json "$RUNNER_TEMP/api.old.json"
+          make refresh-spec
 
       - name: Detect changes
         id: changes
@@ -29,6 +31,21 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Summarise changes
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          # shellcheck disable=SC2016 # backticks are literal Markdown
+          {
+            echo 'Auto-generated refresh of `pkg/mock/spec/api.json` from'
+            echo '[PaulSonOfLars/telegram-bot-api-spec](https://github.com/PaulSonOfLars/telegram-bot-api-spec).'
+            echo
+            echo 'Methods without an explicit handler keep working: the generic dispatcher'
+            echo 'answers them from this spec. Only the first list below may need a look.'
+            echo
+            scripts/spec-diff.sh "$RUNNER_TEMP/api.old.json" pkg/mock/spec/api.json
+          } > "$RUNNER_TEMP/pr-body.md"
+          cat "$RUNNER_TEMP/pr-body.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Open PR
         if: steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v8
@@ -38,16 +55,7 @@ jobs:
           branch: chore/refresh-spec
           commit-message: "chore: refresh Bot API spec"
           title: "chore: refresh Bot API spec"
-          body: |
-            Auto-generated refresh of `pkg/mock/spec/api.json` from
-            [PaulSonOfLars/telegram-bot-api-spec](https://github.com/PaulSonOfLars/telegram-bot-api-spec).
-
-            ### Review checklist
-            - CI passes (tests cover dispatcher reading the embedded spec)
-            - Diff of `api.json` does not show breaking changes to methods with
-              custom handlers in `pkg/mock/handlers.go` (sendMessage, getMe,
-              setWebhook, answerCallbackQuery, editMessageText, getFile)
-            - Merge → README badge auto-updates via shields.io dynamic JSON
+          body-path: ${{ runner.temp }}/pr-body.md
           labels: |
             chore
             dependencies
