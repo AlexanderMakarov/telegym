@@ -99,8 +99,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only our archives: docker/build-push-action uploads a build record
+      # artifact too, which must not end up in the release.
       - uses: actions/download-artifact@v8
         with:
+          pattern: binaries-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: k6-*
           path: dist
           merge-multiple: true
 
