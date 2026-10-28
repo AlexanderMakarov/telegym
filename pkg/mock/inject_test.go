@@ -7,8 +7,61 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestInjectUpdateDispatchObservability(t *testing.T) {
+	for _, webhook := range []bool{false, true} {
+		result := "queued"
+		if webhook {
+			result = "ok"
+		}
+
+		t.Run(result, func(t *testing.T) {
+			cfg := Config{Quiet: true}
+			wantStatus := 0
+			if webhook {
+				receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))
+				defer receiver.Close()
+				cfg.DefaultWebhookURL = receiver.URL
+				wantStatus = http.StatusOK
+			}
+
+			srv := New(cfg)
+			if !webhook {
+				startPolling(t, srv, "889:inject")
+			}
+			rec := pollingRequest(srv, http.MethodPost, "/debug/inject/update", `{"token":"889:inject","chat_id":42,"text":"hello"}`)
+			var response struct {
+				OK             bool  `json:"ok"`
+				Queued         *bool `json:"queued"`
+				DeliveryStatus int   `json:"delivery_status"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode inject response: %v", err)
+			}
+			if rec.Code != http.StatusOK || !response.OK || response.DeliveryStatus != wantStatus {
+				t.Fatalf("unexpected inject response: status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if response.Queued == nil || *response.Queued != !webhook {
+				t.Fatalf("expected queued=%t: %s", !webhook, rec.Body.String())
+			}
+
+			rec = httptest.NewRecorder()
+			srv.metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			wantMetric := `telegym_mock_webhook_dispatches_total{result="` + result + `"} 1`
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), wantMetric) {
+				t.Fatalf("expected metric %s: status=%d body=%s", wantMetric, rec.Code, rec.Body.String())
+			}
+			if !webhook && !strings.Contains(rec.Body.String(), "telegym_mock_webhook_dispatch_duration_seconds_count 0") {
+				t.Fatal("queueing was counted as webhook delivery latency")
+			}
+		})
+	}
+}
 
 // injectWebhook returns the update delivered by the injection endpoint.
 func injectWebhook(t *testing.T, payload string, wantStatus int) *Update {

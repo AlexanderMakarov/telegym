@@ -1,8 +1,11 @@
 package mock
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,12 +15,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handlers wires the Bot API method endpoints to the Store and WebhookDispatcher.
+// Handlers wires the Bot API method endpoints to the Store and UpdateDispatcher.
 // Every method either returns a valid Message (so telego et al. can
 // unmarshal) or a boolean - matching the real Telegram API contract.
 type Handlers struct {
-	Store             *Store
-	WebhookDispatcher *WebhookDispatcher
+	Store            *Store
+	UpdateDispatcher *UpdateDispatcher
 }
 
 // errResp writes a Telegram-shaped error envelope.
@@ -25,12 +28,19 @@ func errResp(c *gin.Context, code int, desc string) {
 	c.JSON(code, APIResponse{OK: false, ErrorCode: code, Description: desc})
 }
 
-// readBody returns either parsed JSON body or, for multipart requests, a
-// map of form fields. The handler decides which keys it cares about.
+// readBody returns either parsed JSON body or, for multipart and urlencoded
+// requests, a map of form fields. The handler decides which keys it cares about.
 func readBody(c *gin.Context) (map[string]any, error) {
 	ct := c.GetHeader("Content-Type")
-	if strings.HasPrefix(ct, "multipart/form-data") {
-		if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+	multipart := strings.HasPrefix(ct, "multipart/form-data")
+	if multipart || strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
+		var err error
+		if multipart {
+			err = c.Request.ParseMultipartForm(32 << 20)
+		} else {
+			err = c.Request.ParseForm()
+		}
+		if err != nil {
 			return nil, err
 		}
 		out := make(map[string]any, len(c.Request.PostForm))
@@ -137,7 +147,7 @@ func parseEntities(v any) []Entity {
 func (h *Handlers) newBotMessage(bot *botEntry, chatID int64) Message {
 	return Message{
 		isNew:     true,
-		MessageID: h.Store.NextMessageID(),
+		MessageID: bot.NextMessageID(chatID),
 		From:      &bot.identity,
 		Date:      time.Now().Unix(),
 		Chat:      Chat{ID: chatID, Type: "private"},
@@ -152,6 +162,39 @@ func fakeFileID(kind string) string {
 // =====================================================================
 // Bot API endpoints
 // =====================================================================
+
+func (h *Handlers) GetUpdates(c *gin.Context, bot *botEntry) {
+	if h.UpdateDispatcher.hasTarget(bot) {
+		errResp(c, http.StatusConflict, errPollWebhook.Error())
+		return
+	}
+	// Same tolerant parsing as other methods: empty body, query/form fields,
+	// and string-encoded numbers are all accepted by Telegram.
+	body, err := readBody(c)
+	if err != nil {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	param := func(key string) any {
+		if v, ok := body[key]; ok {
+			return v
+		}
+		return c.Query(key)
+	}
+
+	// The newest request wins: a previous long poll is terminated with 409.
+	ctx, release := bot.updates.BeginPoll(c.Request.Context())
+	defer release()
+
+	timeout := time.Duration(max(0, toInt(param("timeout")))) * time.Second
+	updates := bot.updates.Poll(ctx, toInt64(param("offset")), toInt(param("limit")), timeout)
+	var conflict pollConflict
+	if errors.As(context.Cause(ctx), &conflict) {
+		errResp(c, http.StatusConflict, conflict.Error())
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse{OK: true, Result: updates})
+}
 
 func (h *Handlers) GetMe(c *gin.Context, bot *botEntry) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: bot.identity})
@@ -326,7 +369,15 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	// If this was a multipart upload, capture the actual bytes into the
 	// FileStore so telegym-proxy can later forward the real file to Telegram.
 	// For file_id-only requests (cached), we keep the existing fake ID.
-	fileID := h.captureUploadedFile(c, kind)
+	fileID, err := h.captureUploadedFile(c, kind)
+	if err != nil {
+		if errors.Is(err, errUploadTooLarge) || errors.Is(err, errFileStoreTooSmall) {
+			errResp(c, http.StatusRequestEntityTooLarge, "Request Entity Too Large: "+err.Error())
+			return
+		}
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
 	if fileID == "" {
 		// Fall back to whatever was passed in the body as file reference,
 		// or a fresh fake ID if nothing was provided.
@@ -362,40 +413,46 @@ func (h *Handlers) sendMedia(c *gin.Context, bot *botEntry, kind string) {
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: m})
 }
 
-// captureUploadedFile reads the named multipart file (if present) and stores
-// it in the file store, returning the assigned file_id. Returns "" if the
-// request wasn't multipart or didn't carry the named file.
-func (h *Handlers) captureUploadedFile(c *gin.Context, fieldName string) string {
+var (
+	errUploadTooLarge    = errors.New("uploaded file exceeds 50 MB")
+	errFileStoreTooSmall = errors.New("uploaded file exceeds file store capacity")
+)
+
+// captureUploadedFile stores the named multipart file and returns its file_id.
+// It returns an empty ID when no file was uploaded, or an error if capture fails.
+func (h *Handlers) captureUploadedFile(c *gin.Context, fieldName string) (string, error) {
 	ct := c.GetHeader("Content-Type")
 	if !strings.HasPrefix(ct, "multipart/form-data") {
-		return ""
+		return "", nil
 	}
 	fileHdr, err := c.FormFile(fieldName)
-	if err != nil || fileHdr == nil {
-		return ""
+	if errors.Is(err, http.ErrMissingFile) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
 	}
 	src, err := fileHdr.Open()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer func() { _ = src.Close() }()
 	const maxFile = 50 * 1024 * 1024 // 50 MB per file
-	buf := make([]byte, 0, fileHdr.Size)
-	tmp := make([]byte, 32*1024)
-	for {
-		n, rerr := src.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			if len(buf) > maxFile {
-				return ""
-			}
-		}
-		if rerr != nil {
-			break
-		}
+	limit := min(int64(maxFile), h.Store.Files.maxBytes)
+	data, err := io.ReadAll(io.LimitReader(src, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxFile {
+		return "", errUploadTooLarge
+	}
+	// Reject before Put: an upload larger than capacity would evict the
+	// existing files and itself, leaving the client with an unusable ID.
+	if int64(len(data)) > h.Store.Files.maxBytes {
+		return "", errFileStoreTooSmall
 	}
 	ctype := fileHdr.Header.Get("Content-Type")
-	return h.Store.Files.Put(fieldName, ctype, fileHdr.Filename, buf)
+	return h.Store.Files.Put(fieldName, ctype, fileHdr.Filename, data), nil
 }
 
 func (h *Handlers) SendPhoto(c *gin.Context, b *botEntry)     { h.sendMedia(c, b, "photo") }
@@ -443,29 +500,58 @@ func (h *Handlers) GetChatMember(c *gin.Context, _ *botEntry) {
 	}})
 }
 
+// Telegram accepts an empty JSON body as no parameters for both webhook methods.
+// deleteWebhook has no required parameters. Although setWebhook documents url
+// as required, its server treats an omitted URL as empty and removes the webhook.
+// Accept io.EOF from binding below to match that behavior.
+// See process_set_webhook_query in:
+// https://github.com/tdlib/telegram-bot-api/blob/e3e9dd8e5b3d7ab8537cd5a10dc31d5ffa8f82d1/telegram-bot-api/Client.cpp#L15803-L15807
+type webhookRequest struct {
+	URL                string `json:"url" form:"url"`
+	SecretToken        string `json:"secret_token" form:"secret_token"`
+	DropPendingUpdates bool   `json:"drop_pending_updates" form:"drop_pending_updates"`
+}
+
 func (h *Handlers) SetWebhook(c *gin.Context, bot *botEntry) {
-	body, err := readBody(c)
-	if err != nil {
+	var req webhookRequest
+	if err := c.ShouldBind(&req); err != nil && !errors.Is(err, io.EOF) {
 		errResp(c, 400, "Bad Request: "+err.Error())
 		return
 	}
-	url := toString(body["url"])
-	secret := toString(body["secret_token"])
-	bot.SetWebhook(url, secret)
+	if req.DropPendingUpdates {
+		bot.updates.Clear()
+	}
+	bot.SetWebhook(req.URL, req.SecretToken)
+	if req.URL != "" {
+		// Telegram ends an active long poll once a webhook is registered.
+		bot.updates.TerminatePoll(errPollWebhookSet)
+	} else {
+		bot.updates.OptIn()
+	}
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
 func (h *Handlers) DeleteWebhook(c *gin.Context, bot *botEntry) {
+	var req webhookRequest
+	if err := c.ShouldBind(&req); err != nil && !errors.Is(err, io.EOF) {
+		errResp(c, http.StatusBadRequest, "Bad Request: "+err.Error())
+		return
+	}
+	if req.DropPendingUpdates {
+		bot.updates.Clear()
+	}
 	bot.SetWebhook("", "")
+	// Bots call deleteWebhook before switching to getUpdates.
+	bot.updates.OptIn()
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: true})
 }
 
 func (h *Handlers) GetWebhookInfo(c *gin.Context, bot *botEntry) {
-	url, _ := bot.Webhook()
+	url, _ := h.UpdateDispatcher.target(bot)
 	c.JSON(http.StatusOK, APIResponse{OK: true, Result: WebhookInfo{
 		URL:                  url,
 		HasCustomCertificate: false,
-		PendingUpdateCount:   0,
+		PendingUpdateCount:   bot.updates.Len(),
 		MaxConnections:       40,
 	}})
 }

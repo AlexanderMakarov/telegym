@@ -43,8 +43,10 @@ func (h *Handlers) GenericDispatch(c *gin.Context, bot *botEntry, methodName str
 			body, _ := readBody(c)
 			if chatID := toInt64(body["chat_id"]); chatID != 0 {
 				m["chat"] = map[string]any{"id": chatID, "type": "private"}
+				m["message_id"] = bot.NextMessageID(chatID)
+			} else {
+				m["message_id"] = h.Store.NextMessageID()
 			}
-			m["message_id"] = h.Store.NextMessageID()
 			m["date"] = time.Now().Unix()
 			m["from"] = bot.identity
 		}
