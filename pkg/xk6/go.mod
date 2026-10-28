@@ -3,7 +3,7 @@ module github.com/kolomiichenko/telegym/pkg/xk6
 go 1.27.3
 
 require (
-	github.com/kolomiichenko/telegym v0.0.0
+	github.com/kolomiichenko/telegym v0.6.1
 	go.k6.io/k6/v2 v2.3.0
 )
 
@@ -48,5 +48,3 @@ require (
 	gopkg.in/guregu/null.v3 v3.5.0 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
-
-replace github.com/kolomiichenko/telegym => ../..

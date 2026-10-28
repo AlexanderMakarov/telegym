@@ -79,7 +79,9 @@ Maintainers tag `main`; the `Release` workflow does the rest:
 git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
 ```
 
-It pushes `ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}` and
+It tags the xk6 extension module as `pkg/xk6/v0.6.0` (so `xk6 build --with
+github.com/kolomiichenko/telegym/pkg/xk6@v0.6.0` works outside this repo),
+pushes `ghcr.io/kolomiichenko/telegym-mock:{0.6.0,0.6,latest}` and
 drafts a GitHub Release with binaries for every platform, k6 with
 `xk6-telegym`, `checksums.txt` and generated notes. Edit the draft before
 publishing: give it a title that starts with the version
@@ -89,6 +91,11 @@ the release, then press **Publish**. Use
 [semver](https://semver.org/): bump the minor version for features, the
 patch version for fixes. A tag like `v0.6.0-rc.1` is published as well,
 without moving `latest`.
+
+`pkg/xk6/go.mod` requires a released version of the root module, not a
+local `replace` (the `go.work` workspace covers local development). If the
+extension starts using root-module code that isn't in that version yet,
+release the root module first, then bump the requirement.
 
 ## Code style
 
