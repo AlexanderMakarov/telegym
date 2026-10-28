@@ -69,6 +69,18 @@ docker run --rm -p 5678:5678 -p 9104:9104 ghcr.io/kolomiichenko/telegym-mock:lat
 telegym-mock -version   # every binary reports its release tag
 ```
 
+On macOS take `darwin_arm64` for Apple Silicon (M1 and later) and
+`darwin_amd64` for Intel Macs. The binaries aren't signed with an Apple
+certificate, so if you download an archive in a browser, macOS may refuse
+to run them the first time. Clear the quarantine flag once, or allow them
+in System Settings → Privacy & Security → "Open Anyway":
+
+```bash
+xattr -d com.apple.quarantine telegym-mock telegym-proxy k6
+```
+
+Downloads with `curl` or `gh release download` aren't quarantined.
+
 **Bots on the host, mock in Docker.** A bot that polls `getUpdates` works
 as is. A webhook bot must register a URL the container can reach: on Docker
 Desktop that is `http://host.docker.internal:<port>/...`, not `localhost`,
