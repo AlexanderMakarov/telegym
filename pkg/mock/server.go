@@ -18,6 +18,9 @@ type Config struct {
 	DefaultToken      string // pre-fills the debug chat home form (no auth, cosmetic)
 	FileStoreMaxBytes int64  // 0 uses the 100 MiB default
 	Quiet             bool   // suppress request logs (recommended for load runs)
+	// DisableRequestJournal skips recording Bot API calls for
+	// /debug/requests, saving per-request work on load runs.
+	DisableRequestJournal bool
 	// MaxMessagesPerChat caps the outbound history kept per chat; zero
 	// keeps DefaultMaxMessagesPerChat.
 	MaxMessagesPerChat int
@@ -72,7 +75,9 @@ func New(cfg Config) *Server {
 		router:   router,
 	}
 	router.Use(metrics.ginMiddleware())
-	router.Use(s.requestJournalMiddleware())
+	if !cfg.DisableRequestJournal {
+		router.Use(s.requestJournalMiddleware())
+	}
 	s.registerRoutes()
 	return s
 }

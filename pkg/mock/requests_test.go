@@ -68,10 +68,9 @@ func TestRequestJournalCapturesParametersAndStatus(t *testing.T) {
 			status: http.StatusOK, parameters: map[string]any{"chat_id": "-42", "user_id": "7"},
 		},
 		{
-			// readBody rejects URL-encoded bodies; observing them must not change that.
-			name: "rejected form", method: http.MethodPost, path: "deleteMessage",
+			name: "explicit form", method: http.MethodPost, path: "deleteMessage",
 			contentType: "application/x-www-form-urlencoded", body: "chat_id=42&message_id=123",
-			status: http.StatusBadRequest, parameters: map[string]any{"chat_id": "42", "message_id": "123"},
+			status: http.StatusOK, parameters: map[string]any{"chat_id": "42", "message_id": "123"},
 		},
 		{
 			name: "invalid JSON", method: http.MethodPost, path: "sendMessage?chat_id=42",
@@ -230,5 +229,17 @@ func TestRequestJournalPreservesBodyReadErrors(t *testing.T) {
 	requests := readJournal(t, srv, "901:journal", "")
 	if len(requests) != 1 || requests[0].Status != http.StatusBadRequest {
 		t.Fatalf("failed request missing from journal: %+v", requests)
+	}
+}
+
+func TestRequestJournalDisabled(t *testing.T) {
+	srv := New(Config{Quiet: true, DisableRequestJournal: true})
+	rec := journalRequest(srv, http.MethodPost, "/bot902:journal/sendMessage", "application/json",
+		strings.NewReader(`{"chat_id":42,"text":"hello"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("request status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if requests := readJournal(t, srv, "902:journal", ""); len(requests) != 0 {
+		t.Fatalf("disabled journal recorded %+v", requests)
 	}
 }

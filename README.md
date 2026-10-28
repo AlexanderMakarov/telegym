@@ -129,6 +129,10 @@ if you want a persistent local config.
   slow each other down. Memory peaks at roughly chats x 2 x the cap x
   1-2 KB per message (about 0.5 GB for 1000 chats at 200); lower the cap for
   hour-long runs with many users.
+- Every Bot API call is recorded per bot (method, parameters, status) and
+  served by `GET /debug/requests/:token?method=&limit=`;
+  `POST /debug/requests/:token/clear` empties it. The last 5000 calls are
+  kept. Set `TELEGYM_MOCK_REQUEST_JOURNAL=false` on load runs to skip it.
 
 ## Repo layout
 

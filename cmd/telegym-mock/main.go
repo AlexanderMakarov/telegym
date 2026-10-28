@@ -8,6 +8,7 @@
 //	-max-messages-per-chat, TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT  200
 //	-file-store-max-bytes,  TELEGYM_MOCK_FILE_STORE_MAX_BYTES   0  (0=100 MiB)
 //	-quiet,                 TELEGYM_MOCK_QUIET                  false
+//	-request-journal,       TELEGYM_MOCK_REQUEST_JOURNAL        true  (record calls for /debug/requests)
 //	-banner                                                     print ASCII banner with ANSI colors and exit
 package main
 
@@ -63,8 +64,10 @@ func main() {
 	flag.Int64Var(&cfg.FileStoreMaxBytes, "file-store-max-bytes", envInt64("TELEGYM_MOCK_FILE_STORE_MAX_BYTES", 0), "Maximum retained upload bytes (0 uses 100 MiB)")
 	flag.BoolVar(&cfg.Quiet, "quiet", envBool("TELEGYM_MOCK_QUIET", false), "Suppress per-request logs")
 	flag.IntVar(&cfg.MaxMessagesPerChat, "max-messages-per-chat", envInt("TELEGYM_MOCK_MAX_MESSAGES_PER_CHAT", mock.DefaultMaxMessagesPerChat), "Outbound messages kept per chat")
+	requestJournal := flag.Bool("request-journal", envBool("TELEGYM_MOCK_REQUEST_JOURNAL", true), "Record Bot API calls for /debug/requests (disable on load runs)")
 	flag.BoolVar(&bannerOnly, "banner", false, "Print the ASCII banner with raw ANSI colors to stdout and exit (for `freeze` and similar renderers)")
 	flag.Parse()
+	cfg.DisableRequestJournal = !*requestJournal
 
 	if bannerOnly {
 		// Write raw (always-colored) banner so downstream tools like
