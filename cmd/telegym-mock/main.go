@@ -16,6 +16,7 @@
 //	-rate-limit-group,      TELEGYM_MOCK_RATE_LIMIT_GROUP       20/min
 //	-latency,               TELEGYM_MOCK_LATENCY                ""  (e.g. 50ms or 20ms-150ms)
 //	-fault-rate,            TELEGYM_MOCK_FAULT_RATE             0  (fraction of calls answered 500)
+//	-version                                                    print the version and exit
 //	-banner                                                     print ASCII banner with ANSI colors and exit
 package main
 
@@ -31,6 +32,9 @@ import (
 
 	"github.com/kolomiichenko/telegym/pkg/mock"
 )
+
+// version is set at release build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 func envOr(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok {
@@ -114,7 +118,12 @@ func main() {
 	latency := flag.String("latency", envOr("TELEGYM_MOCK_LATENCY", ""), "Delay Bot API calls: fixed (50ms) or random range (20ms-150ms)")
 	faultRate := flag.String("fault-rate", envOr("TELEGYM_MOCK_FAULT_RATE", "0"), "Fraction of Bot API calls answered with 500 (0-1)")
 	flag.BoolVar(&bannerOnly, "banner", false, "Print the ASCII banner with raw ANSI colors to stdout and exit (for `freeze` and similar renderers)")
+	printVersion := flag.Bool("version", false, "Print the version and exit")
 	flag.Parse()
+	if *printVersion {
+		fmt.Println(version)
+		return
+	}
 	cfg.DisableRequestJournal = !*requestJournal
 
 	var err error

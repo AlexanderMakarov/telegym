@@ -55,7 +55,20 @@ plus an `xk6` extension so k6 scenarios can drive virtual Telegram users.
 - **make** - preinstalled on macOS with Xcode CLI tools (`xcode-select --install`), `apt install make` on Debian/Ubuntu
 - *(optional)* **Docker Compose v2** (`docker compose`) - only needed for `make grafana-up` (Prometheus + Grafana dashboards)
 
-> **About k6.** Don't `brew install k6` or grab a prebuilt binary - it won't work. The k6 used here is a custom build with the bundled `xk6-telegym` extension (exposes `k6/x/telegym` to JS scenarios), assembled into `./bin/k6` by `make k6` / `make build` (uses Go from the prerequisite above). Every example in this README that says `./bin/k6 ...` means *that* binary; a system `k6` won't recognise the `k6/x/telegym` import. `xk6` itself is fetched on demand by the make target, so you don't install it manually either. Same applies to golangci-lint, govulncheck, etc. - all optional, all on-demand.
+> **About k6.** Don't `brew install k6` or grab a stock k6 binary - it won't work. The k6 used here is a custom build with the bundled `xk6-telegym` extension (exposes `k6/x/telegym` to JS scenarios), assembled into `./bin/k6` by `make k6` / `make build` (uses Go from the prerequisite above), or downloaded prebuilt as `k6-telegym_*` from [Releases](https://github.com/kolomiichenko/telegym/releases). Every example in this README that says `./bin/k6 ...` means *that* binary; a system `k6` won't recognise the `k6/x/telegym` import. `xk6` itself is fetched on demand by the make target, so you don't install it manually either. Same applies to golangci-lint, govulncheck, etc. - all optional, all on-demand.
+
+## Prebuilt binaries and Docker image
+
+No Go toolchain needed if you only run the tools. Each
+[release](https://github.com/kolomiichenko/telegym/releases) ships
+`telegym-mock` and `telegym-proxy` (Linux, macOS, Windows), a k6 build with
+`xk6-telegym` (Linux, macOS) and `checksums.txt`. The mock is also published
+as a multi-arch image:
+
+```bash
+docker run --rm -p 5678:5678 -p 9104:9104 ghcr.io/kolomiichenko/telegym-mock:latest
+telegym-mock -version   # every binary reports its release tag
+```
 
 ## Quickstart
 
@@ -255,14 +268,15 @@ relative - k6 is launched from repo root). Reads use `open('../data/...')`
 
 ## Bot API coverage
 
-All 176 Bot API methods are accepted and return shape-valid JSON. Coverage
-breaks down in two layers:
+Every method in the embedded Bot API spec is accepted and returns
+shape-valid JSON. Coverage breaks down in two layers:
 
-- **Explicit handlers** (15 methods) for the ones with real side effects:
+- **Explicit handlers** (about 20 methods, registered in
+  `pkg/mock/server.go`) for the ones with real side effects:
   send/edit messages and media land in the outbound store (queryable via
   `/debug/messages`), `setWebhook` registers the delivery URL, `getMe`
   returns a stable identity per token, etc.
-- **Spec-driven generic dispatcher** for the remaining 161 methods. It loads
+- **Spec-driven generic dispatcher** for all other methods. It loads
   an embedded `api.json` (from
   [PaulSonOfLars/telegram-bot-api-spec](https://github.com/PaulSonOfLars/telegram-bot-api-spec))
   and synthesises a zero-value response of the declared return type. So
@@ -290,10 +304,17 @@ the same way Telegram does it:
 
 `allowed_updates` is accepted but not applied.
 
-Refresh the spec when Telegram releases a new Bot API version:
+A weekly workflow refreshes the spec and opens a PR whose description
+summarises the change: methods with explicit handlers that changed (the
+only part that may need a look), then new, removed and changed methods and
+types for information. New methods work right away through the generic
+dispatcher, so nothing fails the build and explicit handlers can be added
+at your own pace. To refresh by hand and see the same report:
 
 ```bash
+cp pkg/mock/spec/api.json /tmp/api.old.json
 make refresh-spec
+scripts/spec-diff.sh /tmp/api.old.json pkg/mock/spec/api.json
 ```
 
 ## Real-user modes
