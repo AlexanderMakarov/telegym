@@ -40,7 +40,7 @@ func TestFaultsDisabledByDefault(t *testing.T) {
 
 func TestRateLimitsPrivateChat(t *testing.T) {
 	srv := New(Config{Quiet: true, RateLimits: true})
-	for i := range int(privateBurst) {
+	for i := range int(DefaultFloodLimits.Private.Burst) {
 		code, resp := callBot(t, srv, "sendMessage", sendTo("42"))
 		if code != http.StatusOK {
 			t.Fatalf("call %d: status %d, want 200", i, code)
@@ -71,7 +71,7 @@ func TestRateLimitsPrivateChat(t *testing.T) {
 
 func TestRateLimitsGroupAndBot(t *testing.T) {
 	srv := New(Config{Quiet: true, RateLimits: true})
-	for i := range int(groupBurst) {
+	for i := range int(DefaultFloodLimits.Group.Burst) {
 		if code, _ := callBot(t, srv, "sendMessage", sendTo(`"-100500"`)); code != http.StatusOK {
 			t.Fatalf("group call %d: status %d, want 200", i, code)
 		}
@@ -82,7 +82,7 @@ func TestRateLimitsGroupAndBot(t *testing.T) {
 	}
 
 	// The group used 20 of the bot's 30 tokens; ten more private chats fit.
-	for i := range int(botBurst - groupBurst) {
+	for i := range int(DefaultFloodLimits.Bot.Burst - DefaultFloodLimits.Group.Burst) {
 		if code, _ := callBot(t, srv, "sendMessage", sendTo(strconv.Itoa(100+i))); code != http.StatusOK {
 			t.Fatalf("private call %d: status %d, want 200", i, code)
 		}
@@ -94,24 +94,24 @@ func TestRateLimitsGroupAndBot(t *testing.T) {
 
 func TestRateLimiterRefillsAndSweeps(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	l := newRateLimiter()
+	l := newRateLimiter(FloodLimits{})
 	l.now = func() time.Time { return now }
 
-	for range int(privateBurst) {
-		if wait := l.allow("t", "42"); wait != 0 {
+	for range int(DefaultFloodLimits.Private.Burst) {
+		if wait := l.allow("t", "42", false); wait != 0 {
 			t.Fatalf("burst refused, wait %v", wait)
 		}
 	}
-	if wait := l.allow("t", "42"); wait != time.Second {
+	if wait := l.allow("t", "42", false); wait != time.Second {
 		t.Fatalf("wait = %v, want 1s", wait)
 	}
 	now = now.Add(time.Second)
-	if wait := l.allow("t", "42"); wait != 0 {
+	if wait := l.allow("t", "42", false); wait != 0 {
 		t.Fatalf("after refill wait = %v, want 0", wait)
 	}
 
 	now = now.Add(limitSweepInterval)
-	l.allow("t", "43")
+	l.allow("t", "43", false)
 	if _, ok := l.chats["t\x0042"]; ok || len(l.chats) != 1 {
 		t.Fatalf("idle bucket kept: %v", l.chats)
 	}
@@ -160,5 +160,69 @@ func TestFaultRateAndLatency(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/bots", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("debug route faulted: %d", rec.Code)
+	}
+}
+
+func TestParseRateLimit(t *testing.T) {
+	tests := []struct {
+		in   string
+		want RateLimit
+		ok   bool
+	}{
+		{"30/s", RateLimit{Rate: 30, Burst: 30}, true},
+		{"1/s,3", RateLimit{Rate: 1, Burst: 3}, true},
+		{"20/min", RateLimit{Rate: 20.0 / 60, Burst: 20}, true},
+		{" 3600 / h , 10 ", RateLimit{Rate: 1, Burst: 10}, true},
+		{"30", RateLimit{}, false},
+		{"0/s", RateLimit{}, false},
+		{"5/day", RateLimit{}, false},
+		{"5/s,0", RateLimit{}, false},
+	}
+	for _, tt := range tests {
+		got, err := ParseRateLimit(tt.in)
+		if (err == nil) != tt.ok || got != tt.want {
+			t.Errorf("ParseRateLimit(%q) = %+v, %v; want %+v, ok=%v", tt.in, got, err, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestRateLimitsCustom(t *testing.T) {
+	srv := New(Config{Quiet: true, RateLimits: true, FloodLimits: FloodLimits{Private: RateLimit{Rate: 1, Burst: 5}}})
+	for i := range 5 {
+		if code, _ := callBot(t, srv, "sendMessage", sendTo("42")); code != http.StatusOK {
+			t.Fatalf("call %d: status %d, want 200", i, code)
+		}
+	}
+	if code, _ := callBot(t, srv, "sendMessage", sendTo("42")); code != http.StatusTooManyRequests {
+		t.Fatalf("over custom burst: status %d, want 429", code)
+	}
+}
+
+func TestRateLimitsPaidBroadcast(t *testing.T) {
+	srv := New(Config{Quiet: true, RateLimits: true})
+	paid := func(chatID int) string {
+		return `{"chat_id":` + strconv.Itoa(chatID) + `,"text":"hi","allow_paid_broadcast":true}`
+	}
+	// Twice the free per-bot burst goes through when paid, one chat each.
+	for i := range 2 * int(DefaultFloodLimits.Bot.Burst) {
+		if code, _ := callBot(t, srv, "sendMessage", paid(1000+i)); code != http.StatusOK {
+			t.Fatalf("paid call %d: status %d, want 200", i, code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	want := "telegym_mock_paid_broadcast_messages_total " + strconv.Itoa(2*int(DefaultFloodLimits.Bot.Burst)) + "\n"
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("metrics missing %q", want)
+	}
+	// Paid calls use their own bucket, and per-chat limits still apply.
+	if code, _ := callBot(t, srv, "sendMessage", sendTo("1")); code != http.StatusOK {
+		t.Fatalf("free call after paid burst: status %d, want 200", code)
+	}
+	for range int(DefaultFloodLimits.Private.Burst) - 1 {
+		callBot(t, srv, "sendMessage", paid(1000))
+	}
+	if code, _ := callBot(t, srv, "sendMessage", paid(1000)); code != http.StatusTooManyRequests {
+		t.Fatalf("paid call past chat limit: status %d, want 429", code)
 	}
 }

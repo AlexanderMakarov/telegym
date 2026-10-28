@@ -26,6 +26,10 @@ type Metrics struct {
 	UpdatesEvictedTotal     prometheus.Counter
 	ProxyForwardsTotal      *prometheus.CounterVec
 	ProxyBindings           prometheus.Gauge
+	// PaidBroadcastMessagesTotal counts messages accepted with
+	// allow_paid_broadcast while rate limits are on; each would cost
+	// 0.1 Telegram Stars.
+	PaidBroadcastMessagesTotal prometheus.Counter
 }
 
 // NewMetrics initializes and registers all mock-side metrics. A custom
@@ -89,7 +93,13 @@ func NewMetrics(store *Store) *Metrics {
 		),
 	}
 
+	m.PaidBroadcastMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "telegym_mock_paid_broadcast_messages_total",
+		Help: "Messages accepted with allow_paid_broadcast (0.1 Telegram Stars each); counted while rate limits are on.",
+	})
+
 	reg.MustRegister(
+		m.PaidBroadcastMessagesTotal,
 		m.RequestsTotal,
 		m.RequestDuration,
 		m.WebhookDispatchTotal,

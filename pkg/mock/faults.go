@@ -3,6 +3,7 @@ package mock
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"math/rand/v2"
@@ -15,13 +16,73 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Telegram flood limits, per https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this.
-// Each is a token bucket: burst messages at once, then refilling at rate/s.
-const (
-	botRate, botBurst         = 30.0, 30.0      // ~30 messages/s across all chats
-	privateRate, privateBurst = 1.0, 3.0        // ~1 message/s per private chat, short bursts tolerated
-	groupRate, groupBurst     = 20.0 / 60, 20.0 // 20 messages/min per group or channel
-)
+// RateLimit is a token bucket: Burst messages at once, then refilling at
+// Rate messages per second.
+type RateLimit struct {
+	Rate, Burst float64
+}
+
+// FloodLimits configures the emulated Telegram flood limits. Zero fields
+// keep DefaultFloodLimits.
+type FloodLimits struct {
+	Bot     RateLimit // all chats of one bot
+	Paid    RateLimit // one bot's calls with allow_paid_broadcast, instead of Bot
+	Private RateLimit // one private chat
+	Group   RateLimit // one group or channel
+}
+
+// DefaultFloodLimits follows https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
+// and allow_paid_broadcast in the Bot API. Telegram tolerates short bursts
+// and publishes no exact burst sizes, so those are estimates.
+var DefaultFloodLimits = FloodLimits{
+	Bot:     RateLimit{Rate: 30, Burst: 30},
+	Paid:    RateLimit{Rate: 1000, Burst: 1000},
+	Private: RateLimit{Rate: 1, Burst: 3},
+	Group:   RateLimit{Rate: 20.0 / 60, Burst: 20},
+}
+
+func (f FloodLimits) withDefaults() FloodLimits {
+	pick := func(v, def RateLimit) RateLimit {
+		if v.Rate <= 0 || v.Burst < 1 {
+			return def
+		}
+		return v
+	}
+	d := DefaultFloodLimits
+	return FloodLimits{
+		Bot:     pick(f.Bot, d.Bot),
+		Paid:    pick(f.Paid, d.Paid),
+		Private: pick(f.Private, d.Private),
+		Group:   pick(f.Group, d.Group),
+	}
+}
+
+// ParseRateLimit parses "N/s", "N/min" or "N/h", optionally followed by
+// ",burst". Without a burst, N messages may go out at once: "20/min" allows
+// 20 immediately, then one every 3s.
+func ParseRateLimit(s string) (RateLimit, error) {
+	spec, burstText, hasBurst := strings.Cut(s, ",")
+	countText, unit, ok := strings.Cut(strings.TrimSpace(spec), "/")
+	if !ok {
+		return RateLimit{}, fmt.Errorf("want N/s, N/min or N/h, got %q", s)
+	}
+	count, err := strconv.ParseFloat(strings.TrimSpace(countText), 64)
+	if err != nil || count <= 0 {
+		return RateLimit{}, fmt.Errorf("want a positive count, got %q", countText)
+	}
+	periods := map[string]float64{"s": 1, "min": 60, "h": 3600}
+	period, ok := periods[strings.TrimSpace(unit)]
+	if !ok {
+		return RateLimit{}, fmt.Errorf("want unit s, min or h, got %q", unit)
+	}
+	limit := RateLimit{Rate: count / period, Burst: count}
+	if hasBurst {
+		if limit.Burst, err = strconv.ParseFloat(strings.TrimSpace(burstText), 64); err != nil || limit.Burst < 1 {
+			return RateLimit{}, fmt.Errorf("want burst >= 1, got %q", burstText)
+		}
+	}
+	return limit, nil
+}
 
 // limitSweepInterval bounds how often idle buckets are dropped, so long runs
 // over many chats keep the limiter small.
@@ -54,39 +115,48 @@ func (b *bucket) wait(rate float64) time.Duration {
 type rateLimiter struct {
 	mu        sync.Mutex
 	now       func() time.Time
+	limits    FloodLimits
 	bots      map[string]*bucket
+	paid      map[string]*bucket
 	chats     map[string]*bucket // keyed by token + "\x00" + chat_id
 	lastSweep time.Time
 }
 
-func newRateLimiter() *rateLimiter {
+func newRateLimiter(limits FloodLimits) *rateLimiter {
 	return &rateLimiter{
-		now:   time.Now,
-		bots:  make(map[string]*bucket),
-		chats: make(map[string]*bucket),
+		now:    time.Now,
+		limits: limits.withDefaults(),
+		bots:   make(map[string]*bucket),
+		paid:   make(map[string]*bucket),
+		chats:  make(map[string]*bucket),
 	}
 }
 
 // allow takes a token from both the bot and chat buckets, or returns how
 // long the caller must wait when either is empty. Nothing is consumed on
-// refusal, matching Telegram where rejected calls do not count.
-func (l *rateLimiter) allow(token, chatID string) time.Duration {
+// refusal, matching Telegram where rejected calls do not count. Paid
+// broadcasts draw on their own, larger bot bucket; chat limits still apply.
+func (l *rateLimiter) allow(token, chatID string, paid bool) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
 	l.sweep(now)
 
-	chatRate, chatBurst := privateRate, privateBurst
-	if strings.HasPrefix(chatID, "-") || strings.HasPrefix(chatID, "@") {
-		chatRate, chatBurst = groupRate, groupBurst
+	botLimit, bots := l.limits.Bot, l.bots
+	if paid {
+		botLimit, bots = l.limits.Paid, l.paid
 	}
-	bot := l.bucket(l.bots, token)
+	chatLimit := l.limits.Private
+	if strings.HasPrefix(chatID, "-") || strings.HasPrefix(chatID, "@") {
+		chatLimit = l.limits.Group
+	}
+	bot := l.bucket(bots, token)
 	chat := l.bucket(l.chats, token+"\x00"+chatID)
-	bot.refill(now, botRate, botBurst)
-	chat.refill(now, chatRate, chatBurst)
+	bot.refill(now, botLimit.Rate, botLimit.Burst)
+	chat.refill(now, chatLimit.Rate, chatLimit.Burst)
 
-	if wait := max(bot.wait(botRate), chat.wait(chatRate)); wait > 0 {
+	if wait := max(bot.wait(botLimit.Rate), chat.wait(chatLimit.Rate)); wait > 0 {
 		return wait
 	}
 	bot.tokens--
@@ -110,7 +180,7 @@ func (l *rateLimiter) sweep(now time.Time) {
 		return
 	}
 	l.lastSweep = now
-	for _, m := range []map[string]*bucket{l.bots, l.chats} {
+	for _, m := range []map[string]*bucket{l.bots, l.paid, l.chats} {
 		for key, b := range m {
 			if now.Sub(b.last) >= limitSweepInterval {
 				delete(m, key)
@@ -136,7 +206,7 @@ func isFloodLimited(method string) bool {
 func (s *Server) faultsMiddleware() gin.HandlerFunc {
 	var limiter *rateLimiter
 	if s.cfg.RateLimits {
-		limiter = newRateLimiter()
+		limiter = newRateLimiter(s.cfg.FloodLimits)
 	}
 	return func(c *gin.Context) {
 		token, method, ok := parseBotPath(c.Request.URL.Path)
@@ -161,19 +231,25 @@ func (s *Server) faultsMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if limiter != nil && isFloodLimited(method) {
-			if wait := limiter.allow(token, requestChatID(c)); wait > 0 {
-				retryAfter := max(1, int(math.Ceil(wait.Seconds())))
-				c.AbortWithStatusJSON(http.StatusTooManyRequests, APIResponse{
-					OK:          false,
-					ErrorCode:   http.StatusTooManyRequests,
-					Description: "Too Many Requests: retry after " + strconv.Itoa(retryAfter),
-					Parameters:  &ResponseParameters{RetryAfter: retryAfter},
-				})
-				return
-			}
+		if limiter == nil || !isFloodLimited(method) {
+			c.Next()
+			return
+		}
+		chatID, paid := floodKey(c)
+		if wait := limiter.allow(token, chatID, paid); wait > 0 {
+			retryAfter := max(1, int(math.Ceil(wait.Seconds())))
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, APIResponse{
+				OK:          false,
+				ErrorCode:   http.StatusTooManyRequests,
+				Description: "Too Many Requests: retry after " + strconv.Itoa(retryAfter),
+				Parameters:  &ResponseParameters{RetryAfter: retryAfter},
+			})
+			return
 		}
 		c.Next()
+		if paid && c.Writer.Status() == http.StatusOK {
+			s.metrics.PaidBroadcastMessagesTotal.Inc()
+		}
 	}
 }
 
@@ -186,32 +262,34 @@ func (s *Server) latency() time.Duration {
 	return lo + rand.N(hi-lo+1)
 }
 
-// requestChatID reads chat_id from the query, form or JSON body without
-// consuming the body for the handler that runs next.
-func requestChatID(c *gin.Context) string {
+// floodKey reads chat_id and allow_paid_broadcast from the query, form or
+// JSON body without consuming the body for the handler that runs next.
+func floodKey(c *gin.Context) (chatID string, paid bool) {
 	ct := c.ContentType()
 	if ct == "multipart/form-data" || ct == "application/x-www-form-urlencoded" || c.Request.Body == nil {
 		// Parsed forms are cached on the request, so handlers reuse them.
-		return c.Request.FormValue("chat_id")
+		return c.Request.FormValue("chat_id"), c.Request.FormValue("allow_paid_broadcast") == "true"
 	}
-	if id := c.Query("chat_id"); id != "" {
-		return id
-	}
+	chatID, paid = c.Query("chat_id"), c.Query("allow_paid_broadcast") == "true"
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		// Replay what was read, then the same error, so the handler still
 		// reports the broken body.
 		c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), errReader{err}))
-		return ""
+		return chatID, paid
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	var payload struct {
-		ChatID json.RawMessage `json:"chat_id"`
+		ChatID             json.RawMessage `json:"chat_id"`
+		AllowPaidBroadcast bool            `json:"allow_paid_broadcast"`
 	}
-	if json.Unmarshal(body, &payload) != nil {
-		return ""
+	if json.Unmarshal(body, &payload) == nil {
+		if len(payload.ChatID) > 0 {
+			chatID = strings.Trim(string(payload.ChatID), `"`)
+		}
+		paid = paid || payload.AllowPaidBroadcast
 	}
-	return strings.Trim(string(payload.ChatID), `"`)
+	return chatID, paid
 }
 
 type errReader struct{ err error }

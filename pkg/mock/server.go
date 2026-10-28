@@ -23,9 +23,11 @@ type Config struct {
 	// /debug/requests, saving per-request work on load runs.
 	DisableRequestJournal bool
 	// RateLimits answers message-sending calls with 429 and retry_after once
-	// they exceed Telegram's flood limits (30/s per bot, about 1/s per
-	// private chat, 20/min per group).
-	RateLimits bool
+	// they exceed FloodLimits (zero fields keep DefaultFloodLimits: 30/s per
+	// bot, 1000/s with allow_paid_broadcast, about 1/s per private chat,
+	// 20/min per group).
+	RateLimits  bool
+	FloodLimits FloodLimits
 	// LatencyMin and LatencyMax delay every Bot API call by a random
 	// duration in that range; zero disables.
 	LatencyMin, LatencyMax time.Duration
