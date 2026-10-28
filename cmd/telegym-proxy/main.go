@@ -37,6 +37,9 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 )
 
+// version is set at release build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 // ----- config -------------------------------------------------------------
 
 type config struct {
@@ -67,7 +70,12 @@ func loadConfig() config {
 	flag.StringVar(&c.listen, "listen", c.listen, "address to serve /forward callbacks on")
 	flag.StringVar(&c.publicURL, "public-url", c.publicURL, "URL the mock should POST forwards to (default: http://localhost<listen>)")
 	flag.Int64Var(&c.allowedUserID, "allowed-user-id", c.allowedUserID, "0 = allow anyone, otherwise restrict to one Telegram user")
+	printVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *printVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	if c.proxyToken == "" {
 		log.Fatal("PROXY_TOKEN is required (from @BotFather)")

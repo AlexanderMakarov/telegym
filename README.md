@@ -55,7 +55,20 @@ plus an `xk6` extension so k6 scenarios can drive virtual Telegram users.
 - **make** - preinstalled on macOS with Xcode CLI tools (`xcode-select --install`), `apt install make` on Debian/Ubuntu
 - *(optional)* **Docker Compose v2** (`docker compose`) - only needed for `make grafana-up` (Prometheus + Grafana dashboards)
 
-> **About k6.** Don't `brew install k6` or grab a prebuilt binary - it won't work. The k6 used here is a custom build with the bundled `xk6-telegym` extension (exposes `k6/x/telegym` to JS scenarios), assembled into `./bin/k6` by `make k6` / `make build` (uses Go from the prerequisite above). Every example in this README that says `./bin/k6 ...` means *that* binary; a system `k6` won't recognise the `k6/x/telegym` import. `xk6` itself is fetched on demand by the make target, so you don't install it manually either. Same applies to golangci-lint, govulncheck, etc. - all optional, all on-demand.
+> **About k6.** Don't `brew install k6` or grab a stock k6 binary - it won't work. The k6 used here is a custom build with the bundled `xk6-telegym` extension (exposes `k6/x/telegym` to JS scenarios), assembled into `./bin/k6` by `make k6` / `make build` (uses Go from the prerequisite above), or downloaded prebuilt as `k6-telegym_*` from [Releases](https://github.com/kolomiichenko/telegym/releases). Every example in this README that says `./bin/k6 ...` means *that* binary; a system `k6` won't recognise the `k6/x/telegym` import. `xk6` itself is fetched on demand by the make target, so you don't install it manually either. Same applies to golangci-lint, govulncheck, etc. - all optional, all on-demand.
+
+## Prebuilt binaries and Docker image
+
+No Go toolchain needed if you only run the tools. Each
+[release](https://github.com/kolomiichenko/telegym/releases) ships
+`telegym-mock` and `telegym-proxy` (Linux, macOS, Windows), a k6 build with
+`xk6-telegym` (Linux, macOS) and `checksums.txt`. The mock is also published
+as a multi-arch image:
+
+```bash
+docker run --rm -p 5678:5678 -p 9104:9104 ghcr.io/kolomiichenko/telegym-mock:latest
+telegym-mock -version   # every binary reports its release tag
+```
 
 ## Quickstart
 
