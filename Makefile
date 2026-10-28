@@ -1,5 +1,5 @@
 .PHONY: help init build build-examples run test lint check-deps preflight clean \
-        refresh-spec refresh-web-deps \
+        refresh-spec refresh-web-deps demo \
         mock-up mock-down \
         proxy-up proxy-down \
         grafana-up grafana-down \
@@ -132,6 +132,9 @@ refresh-web-deps: ## Pull the latest htmx + idiomorph (both 0BSD; embedded into 
 	@echo "htmx:       $$(wc -c < pkg/mock/web/htmx.min.js) bytes"
 	@echo "idiomorph:  $$(wc -c < pkg/mock/web/idiomorph-ext.min.js) bytes"
 	@echo "rebuild:    make mock"
+
+demo: build build-examples ## Re-record docs/demo.gif and docs/debug-chat.gif (needs vhs, Docker, Node, Chrome)
+	./scripts/demo/record.sh
 
 # PORT lets you run the mock on something other than :5678 without editing
 # the recipes (e.g. `make mock-up PORT=9000`). All up/down targets honor it.

@@ -27,6 +27,12 @@ cross-platform build matrix (linux / darwin / windows x amd64 / arm64).
 Whichever tools you don't have installed are skipped with a hint on how
 to install them; CI has them all and will fail if any one fails.
 
+If your change shows up in the terminal output or the debug chat, re-record
+the README and site demos with `make demo` (`docs/demo.gif`,
+`docs/debug-chat.gif`). It needs vhs, Docker, Node and Chrome and tells you
+how to install whatever is missing; the recording scripts live in
+`scripts/demo/`.
+
 ## Commit messages
 
 We use [Conventional Commits](https://www.conventionalcommits.org/):

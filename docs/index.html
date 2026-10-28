@@ -137,6 +137,19 @@
       border: 1px solid var(--border);
     }
 
+    .demo { margin: 28px 0 0; text-align: center; }
+    .demo-caption { margin: 36px 0 0; text-align: center; color: var(--fg); font-weight: 600; }
+    .demo-caption + .demo { margin-top: 14px; }
+    .demo-caption.first { margin-top: 0; text-align: left; }
+    #quickstart ~ .demo { margin-bottom: 28px; }
+    .demo img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 50px rgba(0,0,0,.45);
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -199,9 +212,12 @@
         <a href="https://github.com/kolomiichenko/telegym/actions/workflows/ci.yml"><img src="https://github.com/kolomiichenko/telegym/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
         <a href="https://pkg.go.dev/github.com/kolomiichenko/telegym"><img src="https://pkg.go.dev/badge/github.com/kolomiichenko/telegym.svg" alt="Go Reference"></a>
         <a href="https://goreportcard.com/report/github.com/kolomiichenko/telegym"><img src="https://goreportcard.com/badge/github.com/kolomiichenko/telegym" alt="Go Report Card"></a>
+        <a href="https://github.com/kolomiichenko/telegym/blob/main/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/kolomiichenko/telegym?logo=go" alt="Go Version"></a>
         <a href="https://core.telegram.org/bots/api"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkolomiichenko%2Ftelegym%2Fmain%2Fpkg%2Fmock%2Fspec%2Fapi.json&query=%24.version&label=Supported%20Bot%20API&color=29a1d4&logo=telegram" alt="Supported Bot API"></a>
-        <a href="https://github.com/kolomiichenko/telegym/releases"><img src="https://img.shields.io/github/v/release/kolomiichenko/telegym" alt="Latest Release"></a>
         <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+        <a href="https://github.com/kolomiichenko/telegym/releases"><img src="https://img.shields.io/github/v/release/kolomiichenko/telegym" alt="Latest Release"></a>
+        <a href="https://github.com/kolomiichenko/telegym/pkgs/container/telegym-mock"><img src="https://img.shields.io/badge/ghcr.io-telegym--mock-2496ED?logo=docker&amp;logoColor=white" alt="Docker image"></a>
+        <a href="https://deepwiki.com/kolomiichenko/telegym"><img src="https://img.shields.io/badge/Ask-DeepWiki-1f6feb" alt="Ask DeepWiki"></a>
       </div>
       <div class="banner">
         <img src="banner.png" alt="telegym — load testing for Telegram bots">
@@ -230,27 +246,33 @@
 
     <section>
       <h2 id="architecture">Architecture</h2>
-      <pre><code>  k6 scenario  ──► xk6-telegym ──► /debug/inject/update ──► telegym-mock
-                                                              │
-                                                              ▼
-                                                  POST &lt;bot_webhook_url&gt;
-                                                              │
-                                                              ▼
-                                                         your bot
-                                                              │
-                                                              ▼
-                                                  POST telegym-mock/bot&lt;token&gt;/sendMessage
-                                                              │
-                                                              ▼
-                                                  stored in telegym-mock.botMessages
-                                                              │
-                                                              ▼
-                                       xk6.awaitButton ◄── GET /debug/botMessages</code></pre>
+      <pre><code>  k6 scenario ──► xk6-telegym ──► POST /debug/inject/update ──► telegym-mock
+                                                                    │
+                                        webhook POST, or the bot's getUpdates
+                                                                    ▼
+                                                                your bot
+                                                                    │
+                                                                    ▼
+                                             POST telegym-mock/bot&lt;token&gt;/sendMessage
+                                                                    │
+                                                                    ▼
+                                                     stored per chat in the mock
+                                                                    │
+                                                                    ▼
+                         tg.awaitText / awaitButton ◄── GET /debug/messages/:token</code></pre>
     </section>
 
     <section>
       <h2 id="quickstart">Quickstart</h2>
-      <p>Three commands to build and smoke-test the full stack against the bundled echobot:</p>
+      <p class="demo-caption first">From zero to a load test in three commands:</p>
+      <div class="demo">
+        <img src="demo.gif" width="860" height="590" alt="docker run the mock, start a bot, run a k6 scenario: 20 virtual users, all checks pass">
+      </div>
+      <p>No Go needed: run the mock from Docker and grab <code>k6</code> with the extension from <a href="https://github.com/kolomiichenko/telegym/releases">Releases</a>.</p>
+      <pre><code>docker run --rm -p 5678:5678 ghcr.io/kolomiichenko/telegym-mock
+./k6 run your-scenario.js           # k6 + xk6-telegym from the release archive</code></pre>
+      <p>A bot that polls <code>getUpdates</code> works with the container as is. A webhook bot has to register a URL the container can reach, e.g. <code>http://host.docker.internal:8443/webhook</code> on Docker Desktop, not <code>localhost</code>.</p>
+      <p>Or build everything from source and smoke-test the full stack against the bundled echobot:</p>
       <pre><code># Optional one-time setup: copies .env.example -> .env and pre-fetches modules.
 make init
 
@@ -271,7 +293,7 @@ make build build-examples
 ./bin/telegym-mock
 TELEGRAM_API_URL=http://localhost:5678 \
 TELEGRAM_TOKEN=1234567890:telegym_default_mock_token_xxxxxxxx \
-./your-bot                          # bot calls setWebhook automatically
+./your-bot                          # webhook (setWebhook) or polling (getUpdates), both work
 
 # Then pick a driver:
 open http://localhost:5678/debug/chat   # manual click-around in the browser
@@ -291,14 +313,25 @@ u.click('age_verify');               // inject a callback query</code></pre>
     </section>
 
     <section>
+      <h2 id="debug-chat">Debug chat</h2>
+      <p>The mock serves a chat UI at <code>/debug/chat</code>: talk to your bot by hand, click its inline buttons, watch replies arrive, all while a load test runs in another terminal.</p>
+      <div class="demo">
+        <img src="debug-chat.gif" width="880" height="600" alt="debug chat: /start, the bot replies with an inline button, clicking it gets an answer">
+      </div>
+    </section>
+
+    <section>
       <h2 id="features">What's in the box</h2>
       <ul>
-        <li><strong>Mock Bot API server</strong> — all 176 methods accepted, 15 with real side effects, the rest dispatched via the official spec.</li>
+        <li><strong>Mock Bot API server</strong> — every method of the current Bot API accepted, about 20 with real side effects (messages, media, edits, forum topics, rich messages), the rest answered from the official spec. Webhook and <code>getUpdates</code> polling, per-chat <code>message_id</code>s like Telegram.</li>
+        <li><strong>Realistic failures</strong> — opt-in Telegram flood limits (<code>429</code> + <code>retry_after</code>, paid broadcasts), added latency and random <code>500</code>s, to see how the bot copes before production does it for you.</li>
+        <li><strong>Request journal</strong> — every Bot API call the bot made, with parameters and status, at <code>/debug/requests</code>.</li>
         <li><strong>xk6 extension</strong> — virtual Telegram users from k6 scenarios with <code>send</code>, <code>click</code>, <code>awaitText</code>, <code>findButton</code>.</li>
         <li><strong>User pools</strong> — two-phase scenarios (register-then-replay) via NDJSON files, with <code>TAG</code> / <code>OFFSET</code> / <code>LIMIT</code> / <code>SHUFFLE</code> env knobs.</li>
         <li><strong>HTMX debug chat</strong> — browser UI for manual testing, served by the mock itself, no real Telegram.</li>
         <li><strong>Real-Telegram relay</strong> (<code>telegym-proxy</code>) — drive the bot-under-test from a real Telegram client through a throwaway proxy bot.</li>
         <li><strong>Metrics &amp; dashboards</strong> — Prometheus + Grafana stack with a pre-provisioned dashboard correlating k6 load and mock-side latency.</li>
+        <li><strong>Prebuilt releases</strong> — binaries for Linux, macOS and Windows, k6 with the extension, and a multi-arch Docker image.</li>
       </ul>
     </section>
 
@@ -310,6 +343,7 @@ u.click('age_verify');               // inject a callback query</code></pre>
         <li><a href="https://pkg.go.dev/github.com/kolomiichenko/telegym">Go reference (godoc)</a></li>
         <li><a href="https://deepwiki.com/kolomiichenko/telegym">DeepWiki</a></li>
         <li><a href="https://github.com/kolomiichenko/telegym/releases">Releases</a></li>
+        <li><a href="https://github.com/kolomiichenko/telegym/pkgs/container/telegym-mock">Docker image</a></li>
         <li><a href="https://github.com/kolomiichenko/telegym/blob/main/CONTRIBUTING.md">Contributing</a></li>
         <li><a href="https://github.com/kolomiichenko/telegym/blob/main/SECURITY.md">Security policy</a></li>
         <li><a href="https://github.com/kolomiichenko/telegym/issues">Issues</a></li>
