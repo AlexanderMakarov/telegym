@@ -1,6 +1,6 @@
 module github.com/kolomiichenko/telegym/pkg/xk6
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/kolomiichenko/telegym v0.0.0
