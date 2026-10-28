@@ -111,7 +111,10 @@ jobs:
         run: |
           cd dist
           sha256sum -- * > checksums.txt
-          gh release create "$TAG" -- * --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          flags=(--verify-tag --generate-notes)
+          # v1.2.3-rc.1 and similar are pre-releases, never "Latest".
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" -- *
 
   image:
     name: Docker image
