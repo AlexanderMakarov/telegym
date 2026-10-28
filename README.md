@@ -7,6 +7,7 @@
 [![Supported Bot API](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkolomiichenko%2Ftelegym%2Fmain%2Fpkg%2Fmock%2Fspec%2Fapi.json&query=%24.version&label=Supported%20Bot%20API&color=29a1d4&logo=telegram)](https://core.telegram.org/bots/api)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Latest Release](https://img.shields.io/github/v/release/kolomiichenko/telegym)](https://github.com/kolomiichenko/telegym/releases)
+[![Docker image](https://img.shields.io/badge/ghcr.io-telegym--mock-2496ED?logo=docker&logoColor=white)](https://github.com/kolomiichenko/telegym/pkgs/container/telegym-mock)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-1f6feb)](https://deepwiki.com/kolomiichenko/telegym)
 
 <p align="center"><img src="docs/banner.png" alt="telegym - load testing for telegram bots" width="700"></p>
