@@ -148,7 +148,7 @@
   <header>
     <div>
       <h1>chat {{.ChatID}} · {{.Name}}</h1>
-      <span class="meta">token {{.TokenShort}} · webhook {{if .WebhookSet}}ready{{else}}<strong style="color:#c33">not set — start your bot</strong>{{end}}</span>
+      <span class="meta">token {{.TokenShort}} · {{if .WebhookSet}}webhook ready{{else if .Polling}}polling getUpdates{{else}}<strong style="color:#c33">no webhook or polling yet — start your bot</strong>{{end}}</span>
     </div>
     <a href="/debug/chat">← chats</a>
   </header>

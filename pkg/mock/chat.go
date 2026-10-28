@@ -141,6 +141,7 @@ type chatVM struct {
 	ChatID      int64
 	Name        string
 	WebhookSet  bool
+	Polling     bool   // the bot reads getUpdates instead of a webhook
 	MessagesURL string // poll URL; carries name and the topic filter
 }
 
@@ -160,6 +161,7 @@ func (h *chatHandlers) view(c *gin.Context) {
 		ChatID:     chatID,
 		Name:       c.DefaultQuery("name", "andrii"),
 		WebhookSet: webhookURL != "",
+		Polling:    bot.updates.Polling(),
 	}
 	q := url.Values{"name": {vm.Name}}
 	if thread := c.Query("thread"); thread != "" {
@@ -508,10 +510,21 @@ func (h *chatHandlers) click(c *gin.Context) {
 // with forum topics; each bot message is then tagged with its topic.
 func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatID int64, name string, topicNames map[int]string) []msgVM {
 	type entry struct {
-		seq int
+		seq int64
 		vm  msgVM
 	}
 	all := make([]entry, 0, len(botMsgs)+len(userInputs))
+
+	// Bot messages and user inputs share the store's event counter, so both
+	// sort by it; message_id is numbered per chat and can't be compared with
+	// input sequence numbers. An edited message keeps the place of its first
+	// version, as in Telegram.
+	firstSeq := map[int]int64{}
+	for _, m := range botMsgs {
+		if s, ok := firstSeq[m.MessageID]; !ok || m.EventSeq < s {
+			firstSeq[m.MessageID] = m.EventSeq
+		}
+	}
 
 	// botMsgs comes newest-first from the store, so the FIRST occurrence
 	// per message_id is the latest edit. Skip subsequent (older) entries
@@ -570,11 +583,11 @@ func mergeChatLog(botMsgs []Message, userInputs []UserInput, token string, chatI
 				}
 			}
 		}
-		all = append(all, entry{seq: m.MessageID, vm: v})
+		all = append(all, entry{seq: firstSeq[m.MessageID], vm: v})
 	}
 	for _, in := range userInputs {
 		all = append(all, entry{
-			seq: in.Seq,
+			seq: int64(in.Seq),
 			vm: msgVM{
 				Side:  "user",
 				Text:  renderTextWithCommands(in.Text, token, chatID, name),
